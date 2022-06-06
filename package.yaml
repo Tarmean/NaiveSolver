@@ -26,6 +26,7 @@ dependencies:
 - lens
 - QuickCheck
 - generic-random
+- transformers
 
 library:
   source-dirs: src
