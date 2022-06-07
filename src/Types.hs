@@ -37,42 +37,41 @@ class (PMonoid s, RegularSemigroup s, PLattice s, Show s, Ord s) => IsLit s wher
   -- Check if the variable is definitely True/False
   evalVar :: Var -> s -> Maybe Bool
 
--- | laws: associative, commutative, idempotent
+-- | Partial meet of data, a AND b is true so union their info
 class PSemigroup s where
+    -- | laws: associative, commutative, idempotent
     (<?>) :: s -> s -> Maybe s
--- | laws: neutral element of <?>, absorbing element of <||>
+-- | Partial merging with default
 class PSemigroup s => PMonoid s where
+    -- | no information. neutral element of <?>, absorbing element of <||>
     pempty :: s
 
--- | absorbing element of <?>, neutral element of <||>
-class PSemigroup s => SemiLattice s where
-    isBot :: s -> Bool
-    bot :: s
--- | laws: associative, commutative, idempotent
--- not distributive over <?>, and usually less accurate
--- (that's why we do case distinction via bdd)
+-- | Partial join of data, a OR b is true so intersect their info
 class (PSemigroup s) => PLattice s where
+    -- | laws: associative, commutative, idempotent
+    -- usually not distributive over <?>, applying it early loses information
+    -- (that's why we do case distinction via bdd)
     (<||>) :: s -> s -> Maybe s
 
--- | a <-> b returns the (ideally minimum) x such that
---   x <??> b  == a
--- intuitively this deduplicates information which is saved elsewhere
--- idempotent
+-- | deduplicates information which is saved elsewhere
 class PSemigroup a => RegularSemigroup a  where
+    -- | a <-> b returns the (ideally minimum) x such that
+    --   x <??> b  == a
+    -- idempotent
     (<->) :: a -> a -> a
 
 -- | more accurate than pseudoinverse in RegularSemigroup
 -- (a <> x) <> inv a  = x
 class PSemigroup a => InverseSemigroup a  where
     inv :: a -> a
+class PSemigroup s => SemiLattice s where
+    isBot :: s -> Bool
+    -- | absorbing element of <?>, neutral element of <||>
+    bot :: s
 
-failedEnv = (False,True,False,False)
-failedTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
+testEnv = (False,True,False,False)
+bddTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
 
-subT = mkBDD (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1)))
-
-
-subb = iff 4 (mLitN 3) (mAnd [mLit 2, mLitN 3])
 
 
 type Var = Int
@@ -197,7 +196,6 @@ mAnd inp = flip evalState pempty $ do
         env' <- liftMaybe $ env <?> s
         put env'
         pure $ (s <-> env, concat o)
-                
 
     flatAnds :: IsLit s => DD s -> MaybeT (State s) [DD s]
     flatAnds (And s ls) = do
