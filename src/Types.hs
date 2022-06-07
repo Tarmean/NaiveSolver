@@ -18,11 +18,61 @@ import Data.List (partition)
 import Data.Either (partitionEithers)
 import qualified Data.Map.Merge.Lazy as M
 import Data.IntMap.Merge.Strict (SimpleWhenMissing)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Control.Applicative
 import Control.Monad.Trans.Maybe
 
+class (PMonoid s, RegularSemigroup s, PLattice s, Show s, Ord s) => IsLit s where
+  -- | construct `var=True`
+  isL :: Var -> s
+  -- | construct `var=False`
+  notL :: Var -> s
+  -- | largest unknown var
+  maxSplitVar :: s -> Var
+  -- | Conditions on variable, `split x s` return
+  --     Just (s|x=True, s|x=False)
+  -- if x occurs in s. Afterwards, the results shouldn't refer to x.
+  -- This could be implemented via `<?>`, `maxSplitVar`, and `<->` but a more performant implementation might be possible
+  splitLit :: Var -> s -> Maybe (DD s,DD s)
+  -- Check if the variable is definitely True/False
+  evalVar :: Var -> s -> Maybe Bool
 
+-- | laws: associative, commutative, idempotent
+class PSemigroup s where
+    (<?>) :: s -> s -> Maybe s
+-- | laws: neutral element of <?>, absorbing element of <||>
+class PSemigroup s => PMonoid s where
+    pempty :: s
+
+-- | absorbing element of <?>, neutral element of <||>
+class PSemigroup s => SemiLattice s where
+    isBot :: s -> Bool
+    bot :: s
+-- | laws: associative, commutative, idempotent
+-- not distributive over <?>, and usually less accurate
+-- (that's why we do case distinction via bdd)
+class (PSemigroup s) => PLattice s where
+    (<||>) :: s -> s -> Maybe s
+
+-- | a <-> b returns the (ideally minimum) x such that
+--   x <??> b  == a
+-- intuitively this deduplicates information which is saved elsewhere
+-- idempotent
+class PSemigroup a => RegularSemigroup a  where
+    (<->) :: a -> a -> a
+
+-- | more accurate than pseudoinverse in RegularSemigroup
+-- (a <> x) <> inv a  = x
+class PSemigroup a => InverseSemigroup a  where
+    inv :: a -> a
+
+failedEnv = (False,True,False,False)
+failedTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
+
+subT = mkBDD (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1)))
+
+
+subb = iff 4 (mLitN 3) (mAnd [mLit 2, mLitN 3])
 
 
 type Var = Int
@@ -55,14 +105,15 @@ mOr inp = go (inj inp)
       | otherwise = go (M.unionWith (<>) (inj $ filter (/= IsFalse) a) e')
     -- go :: M.Map Var [DD s] -> DD s
     go :: IsLit s => M.Map Var [DD s] -> DD s
-    go e
-      | trace ("mOr go " ++ show e) False = undefined
-    -- FIXME: The And lattice element has to be split here
-    -- But technically it doesn't have ot cause the split?
-    -- Like, one half of the split is always 0
-    -- So maybe:
-    -- - add an operator which specializes the lattice for v=True/v=False? isn't this the same as merging?
-    -- - apply it when needed?
+    -- go e
+      -- | trace ("mOr go " ++ show e) False = undefined
+    -- FIXME: this is horribly inefficient:
+    -- If we have invariants at the top we should keep the union of those invariants at the top
+    -- - the union environment is weaker than any input environment
+    -- - the original environments are stronger so any optimizations had been possible previously => no existing branches become impossible
+    -- - we want to keep the union environment on the surface
+    -- - we want to subtract the union environment from per-node environemtns
+    -- - if an environemnt becomes empty we can replace the node with IsTrue and halt
     go e = case M.maxViewWithKey e of
         Nothing -> IsFalse
         Just ((v, ls0), e') -> 
@@ -78,16 +129,22 @@ mOr inp = go (inj inp)
                 | otherwise -> iff v l r
     inj :: IsLit s => [DD s] -> M.Map Var [DD s]
     inj = M.fromListWith (<>) . map mkTag
+    mkTag i@(And s ls)
+      | sVar > lVar = (sVar, [i])
+      | otherwise = (lVar, [i])
+      where
+        sVar = maxSplitVar s
+        lVar = varOf i
     mkTag i = (varOf i, [i])
 split :: IsLit s => Var -> DD s -> (DD s, DD s)
 split v (If v' l r)
   | v == v' = (l, r)
   | otherwise = error "illegal split"
-split v (And s ls) = (gAndS s $ S.fromList $ relL <> invariant, gAnd $ S.fromList $ relR <> invariant)
+split v (And s ls) = 
+    case splitLit v s of
+       Just (sL, sR) -> (gAnd $ S.fromList $ sL : relL <> invariant, gAnd $ S.fromList $ sR : relR <> invariant)
+       Nothing -> (gAndS s $ S.fromList $ relL <> invariant, gAndS s $ S.fromList $ relR <> invariant)
   where
-    -- ((sL, sR), se) = case splitLit v s of
-    --    Just o -> (o, mempty)
-    --    Nothing -> (undefined, s)
     (rel,invariant) = partition (\i -> varOf i == v) $ S.toList ls
     (relL, relR) = splitMap (split v) rel
 split _ a = (a,a)
@@ -120,16 +177,16 @@ mAnd inp = flip evalState pempty $ do
     go e = case M.maxViewWithKey e of
         Nothing -> pure IsTrue
         Just ((v, ls), e') ->  do
-         traceM $ "go: " ++ show (v, ls)
+         -- traceM $ "go: " ++ show (v, ls)
          pre <- get
          if isJust (evalVar @s v pre)
          then do
-           traceM ("skip 1: " ++ show (v, ls))
+           -- traceM ("skip 1: " ++ show (v, ls))
            step ls e'
          else do
-             traceM ("split 1: " ++ show (v, ls))
+             -- traceM ("split 1: " ++ show (v, ls))
              t <- withEnv @s (isL v) $ step ls e'
-             traceM ("split 2: " ++ show (v, ls))
+             -- traceM ("split 2: " ++ show (v, ls))
              f <- withEnv @s (notL v) $ step ls e'
              pure $ iff v t f
 
@@ -219,42 +276,32 @@ type SolveEnv = M.Map Var Bool
 -- solver :: SolveEnv -> S.Set BDD -> Bool
 -- solver = _
 
--- mNot :: IsLit s => DD s -> DD s
+mNot :: (InverseSemigroup s, IsLit s) => DD s -> DD s
 mNot (If v t f) = If v (mNot t) (mNot f)
-mNot (And s xs) = undefined -- mOr $ map mNot $ S.toList xs
+mNot (And s xs) = mOr $ (And (inv s) mempty:) $ map mNot $ S.toList xs
 mNot IsTrue = IsFalse
 mNot IsFalse = IsTrue
--- mNot (Leaf (L v b)) = Leaf $ L v (not b)
 
 
 mLit :: Var -> BDD
 mLit v = And (isL v) mempty
 
+mLitN :: Var -> BDD
+mLitN v = And (notL v) mempty
 
 
-class (Show s, RegularSemigroup s, PMonoid s, Show s, Ord s) => IsLit s where
-  -- type Env s
-  -- type Env s = ()
-  isL :: Var -> s
-  notL :: Var -> s
-  maxSplitVar :: s -> Var
-  splitLit :: Var -> s -> Maybe (DD s,DD s)
-  evalVar :: Var -> s -> Maybe Bool
-  -- intoEnv :: s -> s
-  -- inEnv :: Env s -> s -> Maybe (DD s)
-class PSemigroup s => SemiLattice s where
-    isBot :: s -> Bool
-    bot :: s
-class PSemigroup s where
-    (<?>) :: s -> s -> Maybe s
+isV :: IsLit s => Var -> Bool -> s
+isV v b = if b then isL v else notL v
+
+instance (Ord k, PLattice v) => PLattice (PMap k v) where
+  (<||>) (PMap l) (PMap r) = Just $ PMap $ M.merge M.dropMissing M.dropMissing (M.zipWithMaybeMatched (const (<||>))) l r
+
 newtype Val a = Val {unVal :: a}
   deriving (Eq, Ord, Show)
-instance Ord a => PSemigroup (Val a) where
+instance Eq a => PSemigroup (Val a) where
     (<?>) (Val a) (Val b) = if a == b then Just (Val a) else Nothing
-class PSemigroup a => InverseSemigroup a  where
-    inv :: a -> a
-class PSemigroup a => RegularSemigroup a  where
-    (<->) :: a -> a -> a
+instance (Eq a) => PLattice (Val a) where
+    (<||>) (Val a) (Val b) = if a == b then Just (Val a) else Nothing
  
 data PMap k v = PMap (M.Map k v)
   deriving (Eq, Ord, Show)
@@ -266,8 +313,6 @@ instance (Ord k, PSemigroup v) => PSemigroup (PMap k v) where
       Nothing -> Nothing
       where
         both k x y = x <?> y
-class PSemigroup s => PMonoid s where
-    pempty :: s
 instance (Ord k, PSemigroup v) => PMonoid (PMap k v) where
     pempty = PMap M.empty
 
@@ -281,27 +326,25 @@ instance (Ord k, Eq v, PSemigroup v) => RegularSemigroup (PMap k v) where
          | x == y = Nothing
          | otherwise = Just x
         
+orBot :: Ord s => Maybe s -> DD s
+orBot Nothing = IsFalse
+orBot (Just s) = And s mempty
+
+removeVar :: IsLit s => Var -> Bool -> s -> DD s
+removeVar v b s = case s <?> isV v b of
+    Nothing -> IsFalse
+    Just s' -> And (s' <-> isV v b) mempty
+
 instance IsLit (PMap Var (Val Bool)) where
     isL v = PMap $ M.singleton v (Val True)
     notL v = PMap $ M.singleton v (Val False)
     maxSplitVar (PMap p) = case M.maxViewWithKey p of
       Nothing -> -1
       Just ((v,_),_) -> v
-    splitLit _ _ = Nothing
-      -- Nothing -> Nothing
-      -- Just (Val True) -> Just (p, PMap $ M.singleton v (Val False))
-      -- | v == v' = case b of
-      --   True -> Just (IsTrue, IsFalse)
-      --   False -> Just (IsFalse, IsTrue)
-      -- | otherwise = Nothing
+    splitLit v env
+      | isNothing (evalVar v env) = Nothing
+      | otherwise = Just (removeVar v True env, removeVar v False env)
     evalVar v env = fmap unVal $ env ?? v
-    -- type Env Lit = PMap Var (Val Bool)
-    -- intoEnv (L v b) = PMap $ M.singleton v (Val b)
-    -- inEnv env (L v b) = case env ?? v of
-    --    Nothing -> Just $ Leaf (L v b)
-    --    Just (Val b')
-    --      | b == b' -> Just $ IsTrue
-    --      | otherwise -> Just IsFalse
 
 (&) :: Ord a => S.Set a -> a -> S.Set a
 a & b = S.insert b a
@@ -316,11 +359,12 @@ iff v a b
   | Just o <- cofactor True v a b = o
   | Just o <- cofactor False v b a = o
 iff v (And sl vl) (And sr vr)
-  |  not (S.null inters)
-   = case sl <?> sr of
-     Nothing -> IsFalse
-     Just o -> gAndS o  (inters & iff' v (gAndS (sl <-> o) (vl S.\\ vr)) (gAndS (sr <-> o)(vr S.\\ vl)))
-  where inters = S.intersection vl vr
+  | Just o <-  sl <||> sr = mkOut o
+  | not (S.null inters) = mkOut pempty
+  where
+    mkOut o = gAndS o  (inters & iff' v (gAndS (sl <-> o) (vl S.\\ vr)) (gAndS (sr <-> o)(vr S.\\ vl)))
+    inters = S.intersection vl vr
+    o =  sl <||> sr
 iff v a b = If v a b
 
 cofactor :: IsLit s => Bool -> Var -> (DD s) -> (DD s) -> Maybe (DD s)
@@ -343,6 +387,7 @@ addEnv s a
 addEnv s (And t ls) = case s <?> t of
     Nothing -> IsFalse
     Just q -> And q ls
+addEnv s IsTrue = And s S.empty
 addEnv s t = And s (S.singleton t)
 
 gAnd :: (IsLit s) => S.Set (DD s) -> DD s
@@ -422,7 +467,7 @@ toNNF (BNot (BNot e)) = toNNF e
 toNNF a@(BLit l) = a
 toNNF a@(BNot (BLit l)) = a
 getEnvUnsafe :: BExprEnv -> Var -> Bool
-getEnvUnsafe env v = getEnv env (toEnum v)
+getEnvUnsafe env v = getEnv env (toEnum (v-1))
 reduceNaive :: BExprEnv -> BDD -> Bool
 reduceNaive env (If c t e) =
   if getEnvUnsafe env c
@@ -434,14 +479,15 @@ reduceNaive env (And s ds) = case toEnv env <?> s of
     Just env' -> all (reduceNaive env) ds
     Nothing -> False
   where
-    toEnv (a,b,c,d) = PMap $ M.fromList $ zip [0..] (map Val [a,b,c,d])
+    toEnv (a,b,c,d) = PMap $ M.fromList $ zip [1..] (map Val [a,b,c,d])
 toBDDNaive :: BExpr -> BDD
 toBDDNaive (BAnd e1 e2) = mAnd [toBDDNaive e1, toBDDNaive e2]
 toBDDNaive (BOr e1 e2) = mOr $ [toBDDNaive e1, toBDDNaive e2]
-toBDDNaive (BNot (BLit idx)) = And (notL (fromEnum idx)) mempty
-toBDDNaive (BLit idx) = And (isL (fromEnum idx)) mempty
+toBDDNaive (BNot (BLit idx)) = And (notL (1+fromEnum idx)) mempty
+toBDDNaive (BLit idx) = And (isL (1+fromEnum idx)) mempty
 toBDDNaive (BNot e) = error $ "Not in NNF " ++ show e
 mkBDD :: BExpr -> BDD
 mkBDD = toBDDNaive . toNNF
+checkEquiv env expr = evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
 checkNaive :: IO ()
 checkNaive = quickCheck $ \env expr -> evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
