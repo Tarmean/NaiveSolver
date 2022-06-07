@@ -27,11 +27,14 @@ dependencies:
 - QuickCheck
 - generic-random
 - transformers
+- text
+- ghc-prim
 
 library:
   source-dirs: src
 ghc-options:
     - -Wall
+default-extensions: GHC2021
 
 executables:
   NaiveSolver-exe:

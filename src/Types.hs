@@ -2,6 +2,9 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 module Types where
 import qualified Data.Set as S
@@ -22,6 +25,8 @@ import Data.Maybe (isJust, isNothing)
 import Control.Applicative
 import Control.Monad.Trans.Maybe
 
+class POrd s where
+   compareP :: s -> s -> Maybe Ordering
 class (PMonoid s, RegularSemigroup s, PLattice s, Show s, Ord s) => IsLit s where
   -- | construct `var=True`
   isL :: Var -> s
