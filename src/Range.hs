@@ -5,6 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 module Range where
 import qualified Data.Set as S
 import qualified Data.Map as M
@@ -14,19 +15,31 @@ import Control.Monad.Except (MonadError (..), runExceptT)
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
 import Debug.Trace
+import Test.QuickCheck (quickCheck)
 
 type Var = Int
 
-someTest :: (Either (S.Set Var) (), SomeTest)
-someTest = flip runState (SomeTest emptyPropEnv (S.singleton (Plus 1 2 3))) $ runExceptT $ do
-  toRule @(Range Int) (out @(Range Int) 1 (Range (Just 1) (Just 3)))
-  toRule  @(Range Int)(out @(Range Int) 2 (Range (Just 1) (Just 5)))
+-- Universal recipe to abstract a function: try all combinations of all possible inputs and pick the min/max results for the range
+--
+--   range1 / range2
+--   ~
+--   let results = [x / y | x <- [range1.min..range1.max], y <- [range2.min..range2.max]]
+--   in minimum results ... maximum results
+--
+-- bruteForce turns any abstraction function into this brute force version
+-- useful for checking that we have the best abstraction for the galois connection, i.e. extensionally bruteForce f == f
+checkAbstraction :: (Range Int -> Range Int -> Range Int) -> IO ()
+checkAbstraction f = quickCheck $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
+checkAbstraction1 :: (Range Int -> Range Int) -> IO ()
+checkAbstraction1 f = quickCheck $ \x -> f (fromTuple x) == bruteForce f (fromTuple x)
+
+
+testProp :: (Either (S.Set Var) (), SomeTest)
+testProp = flip runState (SomeTest emptyPropEnv (S.singleton (Plus 1 2 3))) $ runExceptT $ do
+  toRule (out @(Range Int) 1 (1...3))
+  toRule (out @(Range Int) 2 (1...5))
   plusProp @(Range Int)
 
-pPlusAB, pPlusAR, pPlusBR  :: forall b f. (Num b, MonadProp b f) => PlusE Var -> f ()
-pPlusAB (Plus a b r) = out @b r =<< (+) <$> ev a <*> ev b
-pPlusAR (Plus a b r) = out @b b =<< (-) <$> ev r <*> ev a
-pPlusBR (Plus a b r) = out @b a =<< (-) <$> ev r <*> ev b
 
 plusProp :: forall s m s0. (
         Num s,
@@ -37,7 +50,11 @@ plusProp :: forall s m s0. (
         Has s0 (PropEnv s)
     ) => ExceptT (S.Set Var) m ()
 plusProp = appPropagator @s theProp
-  where theProp e = toRule @s (pPlusAB @s e :: PropM m ()) *> toRule @s (pPlusAR @s e) *> toRule @s (pPlusBR @s e)
+  where
+    theProp e = toRule (pPlusAB e) *> toRule (pPlusAR e) *> toRule (pPlusBR e)
+    pPlusAB (Plus a b r) = out @s r =<< (+) <$> ev a <*> ev b
+    pPlusAR (Plus a b r) = out @s b =<< (-) <$> ev r <*> ev a
+    pPlusBR (Plus a b r) = out @s a =<< (-) <$> ev r <*> ev b
 
 class (MonadError (Maybe (S.Set Var)) m) => MonadProp s m where
    tryEv :: Var -> m (Maybe s)
@@ -58,19 +75,12 @@ type Plus = PlusE Var
 class CProp s e where
     prop :: Prop s e
 
--- instance CProp Plus e where
---   prop ev (Plus a b r) = do
---       ev a <- ev b
 
 
 class GetNew c t | c -> t where
     getNew :: c -> S.Set Var -> [t]
 class MonadProp s m => Prop1 s t m where
     prop1 :: t -> m ()
-
-step :: forall s t m c. (GetNew c t, Prop1 s t m) => c -> S.Set Var -> m ()
-step c v = forM_ (getNew c v) $ \t -> prop1 @s t
-    
 
 data PropEnv e = PropEnv {
     dirty :: S.Set Var,
@@ -141,7 +151,7 @@ instance (Monad m, Has s (PropEnv e)) => DirtyM e (StateT s m) where
   diffVars = gets (dirty . getL @_ @(PropEnv e))
 
 data RuleResult = Success | HardFail (S.Set Var) | NotReady
-toRule :: (MonadProp e (PropM m), Monad m) => PropM m () -> ExceptT (S.Set Var) m ()
+toRule :: (Monad m) => PropM m () -> ExceptT (S.Set Var) m ()
 toRule m = do
     me <- lift . evalTrackReadsT . runExceptT . runPropM $  m
     case me of
@@ -193,7 +203,7 @@ instance (Ord a, Num a) => PSemigroup (Range a) where
       where
         l = (maxM a a')
         r = (minM b b')
-        isEmpty (Just a) (Just b) = a > b
+        isEmpty (Just x) (Just y) = x > y
         isEmpty _ _ = False
 minM :: Ord a => Maybe a -> Maybe a -> Maybe a
 minM (Just a)  (Just b) = Just $ min a b
@@ -218,7 +228,95 @@ instance Has SomeTest (S.Set Plus) where
     getL =  testPlus
     putL v s = s { testPlus = v }
 
-instance Num (Range Int) where
+minOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
+minOf f a b c d = minM (f b d) $ minM (f a c) $ minM (f a d) (f b c)
+maxOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
+maxOf f a b c d = maxM (f b d) $ maxM (f a d) $ maxM (f a c) (f b c)
+instance (Ord a, Num a) => Num (Range a) where
     Range a b + Range a' b' = Range (liftA2 (+) a a') (liftA2 (+) b b')
-    Range a b - Range a' b' = Range (liftA2 (-) a b') (liftA2 (+) b a')
+    Range a b - Range a' b' = Range (liftA2 (-) a b') (liftA2 (-) b a')
+    Range a b * Range a' b' = Range (minOf (liftA2 (*)) a b a' b') (maxOf (liftA2 (*)) a b a' b')
+    abs (Range Nothing b) = Range (abs <$> b) Nothing
+    abs (Range (Just a) (Just b))
+      | a <= 0 && b >= 0 = Range (Just 0) (Just $ max (abs a) (abs b))
+      | otherwise = sortRange (Just $ abs a) (Just $ abs b)
+    abs (Range a Nothing) = Range (min 0 <$> a) Nothing
+    signum (Range l r) = case lb <?> rb of
+        Just a -> a
+        Nothing -> Range (Just 1) (Just 0)
+      where
+        lb = case l of
+          Nothing -> Range Nothing Nothing
+          Just a 
+            | a > 0 -> Range (Just 1) Nothing
+            | a == 0 -> Range (Just 0) Nothing
+            | otherwise -> Range (Just (-1)) Nothing
+        rb = case r of
+            Nothing -> Range Nothing Nothing
+            Just b 
+                | b < 0 -> Range Nothing (Just (-1))
+                | b == 0 -> Range Nothing (Just 0)
+                | otherwise -> Range Nothing (Just 1)
+    fromInteger i = Range (Just $ fromInteger i) (Just $ fromInteger i)
+
+(...) :: (Ord a, Num a) => a -> a -> Range a
+(...) a b = Range (Just a) (Just b)
+-- >>> 1 * 2...3 + 4...5
+testRange :: Range Int
+testRange = 2 * 2...3 + 4...5
+-- x \subset sqrtI x ^2
+monotonicFloat :: (Double -> Double) -> Range Int -> Range Int
+monotonicFloat f (Range a b) = Range (ceiling . f . fromIntegral <$> a) (floor . f . fromIntegral <$> b)
+-- monotonicFloat2 :: (Double -> Double) -> Range Int -> Range Int
+-- monotonicFloat f (Range a b) = Range (ceiling . f . fromIntegral <$> a) (floor . f . fromIntegral <$> b)
+sqrtI :: Range Int -> Range Int
+sqrtI = monotonicFloat sqrt
+
+
+
+bruteForce :: forall r. (LiftRange r r) => r -> r
+bruteForce f = liftRange [f]
+
+class LiftRange a b where
+    liftRange :: [a] -> b
+instance (LiftRange a r, Enum x) => LiftRange (Range x -> a) (Range x -> r) where
+    liftRange :: [Range x -> a] -> Range x -> r
+    liftRange fs (Range (Just a) (Just b)) = liftRange [f (mkRange v) | f <- fs, v <- [a..b]]
+    liftRange _ _ = error "liftRange: cannot brute force infinite range"
+instance Ord a => LiftRange (Range a) (Range a) where
+    liftRange :: [Range a] -> Range a
+    liftRange a = Range (minimumMaybe $ map rangeMin a) (maximumMaybe $ map rangeMax a)
+mkRange :: x -> Range x
+mkRange x = Range (Just x) (Just x)
+
+fromTuple :: Ord a => (a, a) -> Range a
+fromTuple (a, b) = sortRange (Just a) (Just b)
+
+
+
+rangeMax :: Range r -> Maybe r
+rangeMax (Range _ (Just b)) = Just b
+rangeMax _ = Nothing
+rangeMin :: Range r -> Maybe r
+rangeMin (Range (Just a) _) = Just a
+rangeMin _ = Nothing
+
+minimumMaybe :: Ord a => [Maybe a] -> Maybe a
+minimumMaybe = foldl1 step
+  where
+    step (Just a) (Just b) = Just (min a b)
+    step _ _ = Nothing
+maximumMaybe :: Ord a => [Maybe a] -> Maybe a
+maximumMaybe = foldl1 step
+  where
+    step (Just a) (Just b) = Just (max a b)
+    step _ _ = Nothing
+    
+-- instance TestRangeGalois (Range a -> r) where
+-- testRangeGalois :: (Enum t, Ord a) => Range t -> (t -> a) -> Range a
+
+sortRange :: Ord a => Maybe a -> Maybe a -> Range a
+sortRange (Just a) (Just b)
+  | a > b = Range (Just b) (Just a)
+sortRange a b = Range a b
     

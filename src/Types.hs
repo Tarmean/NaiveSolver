@@ -8,22 +8,21 @@
 {-# LANGUAGE LambdaCase #-}
 module Types where
 import qualified Data.Set as S
-import Control.Monad
 
-import Test.QuickCheck
+import Test.QuickCheck ( quickCheck, Arbitrary(arbitrary) )
 import GHC.Generics (Generic)
 import Generic.Random
     ( withBaseCase, genericArbitraryRec, genericArbitraryU, (%) )
 import qualified Data.Map as M
 import Control.Monad.State
+    ( evalState, runState, MonadState(get, put), State )
 import Debug.Trace (traceM, trace)
 import Data.List (partition)
 import Data.Either (partitionEithers)
 import qualified Data.Map.Merge.Lazy as M
-import Data.IntMap.Merge.Strict (SimpleWhenMissing)
 import Data.Maybe (isJust, isNothing)
-import Control.Applicative
-import Control.Monad.Trans.Maybe
+import Control.Applicative ( Alternative(empty) )
+import Control.Monad.Trans.Maybe ( MaybeT(..) )
 
 class POrd s where
    compareP :: s -> s -> Maybe Ordering
@@ -74,7 +73,9 @@ class PSemigroup s => SemiLattice s where
     -- | absorbing element of <?>, neutral element of <||>
     bot :: s
 
+testEnv :: (Bool, Bool, Bool, Bool)
 testEnv = (False,True,False,False)
+bddTest :: BExpr
 bddTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
 
 
@@ -94,7 +95,7 @@ data Tag = Absorbing | Neutral
 varOf :: IsLit s => DD s -> Var
 varOf (If v _ _) = v
 varOf (And s ls) = maxSplitVar s `max` (maximum $ (-1:) $ map varOf $ S.toList ls)
-varOf a = (-1)
+varOf _ = (-1)
 
 splitMap :: (a -> (b,c)) -> [a] -> ([b], [c])
 splitMap f ls = (fmap fst ls', fmap snd ls')
@@ -133,7 +134,7 @@ mOr inp = go (inj inp)
                 | otherwise -> iff v l r
     inj :: IsLit s => [DD s] -> M.Map Var [DD s]
     inj = M.fromListWith (<>) . map mkTag
-    mkTag i@(And s ls)
+    mkTag i@(And s _)
       | sVar > lVar = (sVar, [i])
       | otherwise = (lVar, [i])
       where
@@ -273,11 +274,8 @@ flipLit :: Lit -> Lit
 flipLit (L v b) = L v (not b)
 
 
-broken = BAnd (BOr (BLit B4) (BAnd (BLit B2) (BLit B2))) (BOr (BAnd (BLit B2) (BLit B3)) ( BNot (BLit B4)))
 
 type SolveEnv = M.Map Var Bool
--- solver :: SolveEnv -> S.Set BDD -> Bool
--- solver = _
 
 mNot :: (InverseSemigroup s, IsLit s) => DD s -> DD s
 mNot (If v t f) = If v (mNot t) (mNot f)
@@ -315,7 +313,7 @@ instance (Ord k, PSemigroup v) => PSemigroup (PMap k v) where
       Just o -> Just (PMap o)
       Nothing -> Nothing
       where
-        both k x y = x <?> y
+        both _ x y = x <?> y
 instance (Ord k, PSemigroup v) => PMonoid (PMap k v) where
     pempty = PMap M.empty
 
@@ -365,25 +363,27 @@ iff v (And sl vl) (And sr vr)
   | Just o <-  sl <||> sr = mkOut o
   | not (S.null inters) = mkOut pempty
   where
-    mkOut o = gAndS o  (inters & iff' v (gAndS (sl <-> o) (vl S.\\ vr)) (gAndS (sr <-> o)(vr S.\\ vl)))
+    mkOut o = gAndS o  (inters & iff v (gAndS (sl <-> o) (vl S.\\ vr)) (gAndS (sr <-> o)(vr S.\\ vl)))
     inters = S.intersection vl vr
-    o =  sl <||> sr
 iff v a b = If v a b
 
 cofactor :: IsLit s => Bool -> Var -> (DD s) -> (DD s) -> Maybe (DD s)
 cofactor b v l (And s ls)
   | l `S.member` ls = Just $ gAnd' [l,  iff' v b IsTrue (gAndS s $ S.delete l ls)]
    where
-     iff' v True l r  = iff v l r
-     iff' v False r l = iff v l r
+     iff' a True x y  = iff a x y
+     iff' a False x y = iff a y x
 cofactor _ _ _ _ = Nothing
 
 -- testCofactor = cofactor (isL 3) (Leaf $ isL 1) (gAnd' [Leaf $ isL 1, Leaf $ isL 2])
+gAnd' :: IsLit s => [DD s] -> DD s
 gAnd' b = gAnd (S.fromList b)
+gAndS :: IsLit s => s -> S.Set (DD s) -> DD s
 gAndS s b = addEnv s $ gAnd b
 -- 
 
 
+addEnv :: (Eq s, PMonoid s) => s -> DD s -> DD s
 addEnv _ IsFalse = IsFalse
 addEnv s a
   | s == pempty = a
@@ -398,21 +398,19 @@ gAnd ls =
   case flattenEnv (S.toList ls) of
     Nothing -> IsFalse
     Just env -> 
-       case filter (/= top) $ concatMap flatten $ S.toList ls of
-        [] -> addEnv env top
+       case filter (/= IsTrue) $ concatMap flatten $ S.toList ls of
+        [] -> addEnv env IsTrue
         [a] -> addEnv env a
         xs
-          | bot `S.member` S.fromList xs -> bot
+          | IsFalse `S.member` S.fromList xs -> IsFalse
         xs -> And env (S.fromList xs)
   where
     flattenEnv :: (IsLit s) => [DD s] -> Maybe s
-    flattenEnv ls = foldl merge1 (Just pempty) [s | And s _ <- ls]
+    flattenEnv es = foldl merge1 (Just pempty) [s | And s _ <- es]
     merge1 Nothing _ = Nothing
     merge1 (Just m) s = m <?> s
-    flatten (And _ ls) = S.toList ls
+    flatten (And _ es) = S.toList es
     flatten a = [a]
-    bot = IsFalse
-    top = IsTrue
 
 boolToDD :: Bool -> BDD
 boolToDD True = IsTrue
@@ -422,25 +420,10 @@ testGroupAnd = quickCheck $ \bs -> And pempty (S.fromList $ map boolToDD bs) == 
 testGroupOr :: IO ()
 testGroupOr = quickCheck $ \bs -> And pempty (S.fromList $ map boolToDD bs) == boolToDD (and bs)
   
-iff' v l r = If v l r
-
--- litOr :: Lit -> BDD -> BDD
--- litOr = undefined
--- litOr l (Group Or as)
---   | Leaf (flipLit l) `S.member` as = IsTrue
---   | otherwise = group And (S.insert (Leaf l) as)
--- litOr l a = group Or $ S.fromList [a, Leaf l]
-
 litAnd :: (IsLit s) => s -> DD s -> DD s
 litAnd l a = addEnv l a
 
--- splitOn :: Var -> DD s -> (DD s, DD s)
--- splitOn v e@(If c t e)
---   | c == v = (t, e)
---   | otherwise = (e, e)
 
--- appAnd :: Env -> [BDD] -> BDD
--- appAnd env bdds = 
 
 data BLit = B1 | B2 | B3 | B4
   deriving (Eq, Ord, Show, Generic, Enum, Bounded)
@@ -452,10 +435,10 @@ instance Arbitrary BExpr where
     arbitrary = genericArbitraryRec (2 % 2 % 1 % 1 % ()) `withBaseCase` (BLit <$> arbitrary)
 type BExprEnv = (Bool, Bool, Bool, Bool)
 getEnv :: BExprEnv -> BLit -> Bool
-getEnv (b1, b2, b3, b4) B1 = b1
-getEnv (b1, b2, b3, b4) B2 = b2
-getEnv (b1, b2, b3, b4) B3 = b3
-getEnv (b1, b2, b3, b4) B4 = b4
+getEnv (b1, _, _, _) B1 = b1
+getEnv (_, b2, _, _) B2 = b2
+getEnv (_, _, b3, _) B3 = b3
+getEnv (_, _, _, b4) B4 = b4
 evalBExpr :: BExprEnv -> BExpr -> Bool
 evalBExpr env (BAnd e1 e2) = evalBExpr env e1 && evalBExpr env e2
 evalBExpr env (BOr e1 e2) = evalBExpr env e1 || evalBExpr env e2
@@ -467,8 +450,8 @@ toNNF (BOr e1 e2) = BOr (toNNF e1) (toNNF e2)
 toNNF (BNot (BAnd l r)) = BOr (toNNF (BNot l)) (toNNF (BNot r))
 toNNF (BNot (BOr l r)) = BAnd (toNNF (BNot l)) (toNNF (BNot r))
 toNNF (BNot (BNot e)) = toNNF e
-toNNF a@(BLit l) = a
-toNNF a@(BNot (BLit l)) = a
+toNNF a@(BLit {}) = a
+toNNF a@(BNot (BLit {})) = a
 getEnvUnsafe :: BExprEnv -> Var -> Bool
 getEnvUnsafe env v = getEnv env (toEnum (v-1))
 reduceNaive :: BExprEnv -> BDD -> Bool
@@ -476,11 +459,9 @@ reduceNaive env (If c t e) =
   if getEnvUnsafe env c
   then reduceNaive env t
   else reduceNaive env e
-reduceNaive env IsTrue = True
-reduceNaive env IsFalse = False
-reduceNaive env (And s ds) = case toEnv env <?> s of
-    Just env' -> all (reduceNaive env) ds
-    Nothing -> False
+reduceNaive _ IsTrue = True
+reduceNaive _ IsFalse = False
+reduceNaive env (And s ds) = isJust (toEnv env <?> s) && all (reduceNaive env) ds
   where
     toEnv (a,b,c,d) = PMap $ M.fromList $ zip [1..] (map Val [a,b,c,d])
 toBDDNaive :: BExpr -> BDD
@@ -491,6 +472,7 @@ toBDDNaive (BLit idx) = And (isL (1+fromEnum idx)) mempty
 toBDDNaive (BNot e) = error $ "Not in NNF " ++ show e
 mkBDD :: BExpr -> BDD
 mkBDD = toBDDNaive . toNNF
+checkEquiv :: BExprEnv -> BExpr -> Bool
 checkEquiv env expr = evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
 checkNaive :: IO ()
 checkNaive = quickCheck $ \env expr -> evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
