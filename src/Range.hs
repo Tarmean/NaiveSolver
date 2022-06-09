@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE NegativeLiterals #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
@@ -10,12 +11,13 @@ module Range where
 import qualified Data.Set as S
 import qualified Data.Map as M
 import Control.Monad.State
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)))
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty))
 import Control.Monad.Except (MonadError (..), runExceptT)
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
-import Debug.Trace
 import Test.QuickCheck (quickCheck)
+import Data.Maybe (isNothing)
+import Debug.Trace (trace)
 
 type Var = Int
 
@@ -30,6 +32,7 @@ type Var = Int
 -- useful for checking that we have the best abstraction for the galois connection, i.e. extensionally bruteForce f == f
 checkAbstraction :: (Range Int -> Range Int -> Range Int) -> IO ()
 checkAbstraction f = quickCheck $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
+
 checkAbstraction1 :: (Range Int -> Range Int) -> IO ()
 checkAbstraction1 f = quickCheck $ \x -> f (fromTuple x) == bruteForce f (fromTuple x)
 
@@ -217,7 +220,18 @@ maxM (Just a) _ = Just a
 maxM _ (Just a) = Just a
 maxM _ _ = Nothing
 instance (Ord a, Num a) => PLattice (Range a) where
+    (<||>) a b
+      | ia && ib = Nothing
+      | ia = Just b
+      | ib = Just a
+      where
+        ia = invalidRange a
+        ib = invalidRange b
     (<||>) (Range a b) (Range a' b') = Just $ Range (minM a a') (maxM b b')
+
+invalidRange :: Ord a => Range a -> Bool
+invalidRange (Range (Just a) (Just b)) = a > b
+invalidRange _ = False
 
 data SomeTest = SomeTest { testEnv :: (PropEnv (Range Int)), testPlus :: (S.Set Plus) }
   deriving (Eq, Ord, Show)
@@ -252,12 +266,37 @@ instance (Ord a, Num a) => Num (Range a) where
             | a == 0 -> Range (Just 0) Nothing
             | otherwise -> Range (Just (-1)) Nothing
         rb = case r of
-            Nothing -> Range Nothing Nothing
-            Just b 
-                | b < 0 -> Range Nothing (Just (-1))
-                | b == 0 -> Range Nothing (Just 0)
-                | otherwise -> Range Nothing (Just 1)
+          Nothing -> Range Nothing Nothing
+          Just b 
+            | b < 0 -> Range Nothing (Just (-1))
+            | b == 0 -> Range Nothing (Just 0)
+            | otherwise -> Range Nothing (Just 1)
     fromInteger i = Range (Just $ fromInteger i) (Just $ fromInteger i)
+    negate r
+      | invalidRange r = r
+    negate (Range a b) = Range (negate <$> b) (negate <$> a)
+instance (Ord a, Real a) => Real (Range a) where
+  toRational = undefined
+instance (Integral a, Eq a) => Enum (Range a) where
+  toEnum i = Range (Just $ fromIntegral i) (Just $ fromIntegral i)
+  fromEnum (Range (Just i) (Just j)) | i == j = fromIntegral i
+  fromEnum _ = undefined
+instance (Ord a, Bounded a, Integral a) => Integral (Range a) where
+  div (Range ma mb) (Range mc md) = Range (minOf f ma mb mc md) (maxOf g ma mb mc md)
+    where
+      f x y = case (x, y) of
+          (Just a, Just d)
+            | d /= 0 -> Just $ a `div` d
+            | otherwise -> Just maxBound
+          _ -> Nothing
+      g x y = case (x, y) of
+          (Just a, Just d)
+            | d /= 0 -> Just $ a `div` d
+            | otherwise -> Just minBound
+          _ -> Nothing
+  divMod = undefined
+  toInteger = undefined
+  quotRem = undefined
 
 (...) :: (Ord a, Num a) => a -> a -> Range a
 (...) a b = Range (Just a) (Just b)
@@ -272,6 +311,158 @@ monotonicFloat f (Range a b) = Range (ceiling . f . fromIntegral <$> a) (floor .
 sqrtI :: Range Int -> Range Int
 sqrtI = monotonicFloat sqrt
 
+data MaybeInf a = NegInf | Finite a | PlusInf 
+  deriving (Eq, Ord, Show)
+smallestPos :: (Ord a, Num a) => Range a -> Maybe a
+smallestPos (Range (Just a) (Just b))
+  | a <= 0 && b > 0 = Just 1
+  | a >= 0 = Just a
+  | otherwise = Nothing
+smallestPos (Range Nothing (Just a))
+  | a > 0 = Just 1
+  | otherwise = Nothing
+smallestPos (Range (Just a) Nothing)
+  | a <= 0 = Just 1
+  | otherwise = Just a
+smallestPos _ = Just 1
+smallestNeg :: (Ord a, Num a) => Range a -> Maybe a
+smallestNeg = fmap negate . smallestPos . flipRange
+flipRange :: Num a => Range a -> Range a
+flipRange (Range a b) = Range (negate <$> b) (negate  <$> a)
+largestPos :: (Ord a, Num a) => Range a -> Maybe (MaybeInf a)
+largestPos (Range _ (Just b))
+  | b >= 0 = Just $ Finite b
+  | otherwise = Nothing
+largestPos _ = Just PlusInf
+largestNeg :: (Ord a, Num a) => Range a -> Maybe (MaybeInf a)
+largestNeg (Range (Just a) _)
+  | a <= 0 = Just $ Finite a
+  | otherwise = Nothing
+largestNeg _ = Just NegInf
+
+appDiv :: (Integral a, Ord a, Num a) => MaybeInf a -> MaybeInf a -> Maybe (MaybeInf a)
+appDiv PlusInf PlusInf= Just $ Finite 1
+appDiv NegInf NegInf= Just $ Finite 1
+appDiv PlusInf NegInf= Just $ Finite (-1)
+appDiv NegInf PlusInf= Just $ Finite (-1)
+appDiv _ PlusInf = Just $ Finite 0
+appDiv _ NegInf = Just $ Finite 0
+appDiv PlusInf Finite{} = Just PlusInf
+appDiv NegInf Finite{} = Just NegInf
+appDiv (Finite _) (Finite 0) = Nothing
+appDiv (Finite a) (Finite b) = Just $ Finite $ a `div` b
+
+appMod :: (Integral a, Ord a, Num a) => MaybeInf a -> MaybeInf a -> Maybe (MaybeInf a)
+appMod PlusInf PlusInf = Just $ Finite 0
+appMod NegInf NegInf = Just $ Finite 0
+appMod PlusInf NegInf = Just $ Finite 0
+appMod NegInf PlusInf = Just $ Finite 0
+appMod (Finite a) PlusInf = Just $ Finite a
+appMod (Finite a) NegInf = Just $ Finite (negate a)
+appMod PlusInf (Finite a) = Just (Finite a)
+appMod NegInf (Finite a) = Just (Finite a)
+appMod (Finite _) (Finite 0) = Nothing
+appMod (Finite a) (Finite b) = Just $ Finite $ a `mod` b
+
+
+-- modI :: Range Int -> Range Int -> Range Int
+-- modI l r
+--   | null combis = Range (Just 1) (Just 0)
+--   | otherwise = toRange (minimum combis) (maximum combis)
+--   where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appMod a b]]
+divI :: Range Int -> Range Int -> Range Int
+divI l r
+  | null combis = Range (Just 1) (Just 0)
+  | otherwise = toRange (minimum combis) (maximum combis)
+  where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appDiv a b]]
+
+
+-- Doing case splitting rather then brute-forcing all relevant points is much faster
+-- The inner divG only considers the case where the divisor is strictly positive
+divB :: (Show a, Integral a) => Range a -> Range a -> Range a
+divB a b = case splitPosNeg b of
+    Just (lb,rb) -> case (negate (divG a (negate lb))) <||> divG a rb of
+        Just o -> o
+        Nothing -> Range (Just 1) (Just 0)
+    Nothing 
+      | isPos b -> divG a b
+      | otherwise -> negate (divG a (negate b))
+  where
+    divG :: (Show a, Integral a, Num a) => Range a -> Range a -> Range a
+    divG x y
+      | invalidRange x || invalidRange y = Range (Just 1) (Just 0)
+    -- divisor is positive: divide by c to keep large, divide by d to move towards 0
+    divG (Range x y) (Range c d)
+      | x >= Just 0 = Range (x `divM` d) (y `divM` c) -- strictly positive, shrink min
+      | isNothing y || y >= Just 0 = Range (x `divM` c) (y `divM` c) -- mixed signs, keep both
+      | otherwise = Range (x `divM` c) (y `divM` d) -- strictly negative, shrink max
+      where
+        divM Nothing _ = Nothing
+        divM _ Nothing = Just 0
+        divM (Just l) (Just r) = Just $ l `div` r
+
+isPos :: (Num a, Ord a) => Range a -> Bool
+isPos (Range (Just a) _) = a > 0
+isPos _ = False
+
+splitPosNeg :: (Num a, Ord a) => Range a -> Maybe (Range a, Range a)
+splitPosNeg (Range Nothing Nothing) = Just (Range Nothing (Just $ -1), Range (Just 1) Nothing)
+splitPosNeg (Range Nothing (Just b))
+  | b >= 0 = Just (Range Nothing (Just $ -1), Range (Just 1) (Just b))
+splitPosNeg (Range (Just a) Nothing)
+    | a <= 0 = Just (Range (Just a) (Just $ -1), Range (Just 1) Nothing)
+splitPosNeg (Range (Just a) (Just b))
+  | a <= 0 && b >= 0 = Just (Range (Just a) (Just $ -1), Range (Just 1) (Just b))
+splitPosNeg _ = Nothing
+
+
+extremePoints :: (Ord a, Num a) => Range a -> [MaybeInf a]
+extremePoints (Range x y) = [x', y']
+  where
+    x' = case x of
+      Just a -> Finite a
+      Nothing -> NegInf
+    y' = case y of
+      Just a -> Finite a
+      Nothing -> PlusInf
+markantPoints :: (Ord a, Num a) => Range a -> [Maybe (MaybeInf a)]
+markantPoints r = [Finite <$> (smallestPos r), largestPos r, Finite <$> (smallestNeg r), largestNeg r]
+toRange :: MaybeInf a -> MaybeInf a -> Range a
+toRange (NegInf) PlusInf = Range Nothing Nothing
+toRange (Finite a) PlusInf = Range (Just a) Nothing
+toRange (NegInf) (Finite a) = Range Nothing (Just a)
+toRange (Finite a) (Finite b) = Range (Just a) (Just b)
+toRange _ _ = error "impossible"
+
+data Interval a = I a a
+  deriving (Eq, Ord, Show)
+idiv :: Integral a => Interval a -> Interval a -> Interval a
+idiv (I l u) (I l' u') =
+  if l' <= 0 && 0 <= u' then undefined else I
+    (min (l `Prelude.div` max 1 l') (u `Prelude.div` min (-1) u'))
+    (max (u `Prelude.div` max 1 l') (l `Prelude.div` min (-1) u'))
+
+-- min (a...b mod x)
+-- if b-a >= x then 0
+--
+--r = a+z
+--, z < x
+-- offset = a mod x
+-- (a+z) mod x
+--
+-- offset + z >= x = offset+z - x
+-- otherwise = offset+z
+--
+-- solve for minimum:
+--
+-- if (a `mod` x + (b-a)) > x
+-- then 0
+-- else a
+--
+-- max:
+-- if (a `mod` x + (b-a)) >= x
+-- then x-1
+-- else b `mod` x
 
 
 bruteForce :: forall r. (LiftRange r r) => r -> r
@@ -283,9 +474,16 @@ instance (LiftRange a r, Enum x) => LiftRange (Range x -> a) (Range x -> r) wher
     liftRange :: [Range x -> a] -> Range x -> r
     liftRange fs (Range (Just a) (Just b)) = liftRange [f (mkRange v) | f <- fs, v <- [a..b]]
     liftRange _ _ = error "liftRange: cannot brute force infinite range"
-instance Ord a => LiftRange (Range a) (Range a) where
+instance (Show a, Num a, Ord a) => LiftRange (Range a) (Range a) where
     liftRange :: [Range a] -> Range a
-    liftRange a = Range (minimumMaybe $ map rangeMin a) (maximumMaybe $ map rangeMax a)
+    liftRange [] = Range (Just 1) (Just 0)
+    liftRange a = foldl1 step a
+      where
+        step l r = case l <||> r of
+            Nothing -> Range (Just 1) (Just 0)
+            Just l' -> l'
+instance (Num a, Ord a) => PMonoid (Range a) where
+   pempty = Range Nothing Nothing
 mkRange :: x -> Range x
 mkRange x = Range (Just x) (Just x)
 
@@ -319,4 +517,6 @@ sortRange :: Ord a => Maybe a -> Maybe a -> Range a
 sortRange (Just a) (Just b)
   | a > b = Range (Just b) (Just a)
 sortRange a b = Range a b
-    
+
+emptyRange :: Num a => Range a
+emptyRange = Range (Just 1) (Just 0)

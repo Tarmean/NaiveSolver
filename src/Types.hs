@@ -58,10 +58,16 @@ class (PSemigroup s) => PLattice s where
     (<||>) :: s -> s -> Maybe s
 
 -- | deduplicates information which is saved elsewhere
+-- FIXME: i defined this ad-hoc because I needed the operation, but is this just heyting algebras?
 class PSemigroup a => RegularSemigroup a  where
     -- | a <-> b returns the (ideally minimum) x such that
-    --   x <??> b  == a
-    -- idempotent
+    --  (a <-> b) <??> b  == a <??> b
+    --
+    -- for bounded lattices:
+    -- a <-> a = pempty
+    -- a <&> (b <-> a) = a <&> b
+    -- b <&> (b <-> a) = b
+    -- (a <&> b) <-> c ~ (a <-> c) <&> (b <-> c), if <&> is defined
     (<->) :: a -> a -> a
 
 -- | more accurate than pseudoinverse in RegularSemigroup

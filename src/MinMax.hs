@@ -13,7 +13,7 @@
 -- 3. QuickCheck tests
 
 {-# LANGUAGE DeriveFunctor, StandaloneDeriving, ScopedTypeVariables, BlockArguments, FlexibleInstances, UndecidableInstances, PatternSynonyms, BangPatterns #-}
-{-# OPTIONS_GHC -ddump-simpl -O2 -dsuppress-all -dsuppress-uniques #-}
+-- {-# OPTIONS_GHC -ddump-simpl -O2 -dsuppress-all -dsuppress-uniques #-}
 module MinMax (alphabetaInt) where
 
 import Data.List.NonEmpty
