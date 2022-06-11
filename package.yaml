@@ -29,6 +29,7 @@ dependencies:
 - transformers
 - text
 - ghc-prim
+- vector
 
 library:
   source-dirs: src

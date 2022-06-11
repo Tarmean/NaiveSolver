@@ -17,7 +17,6 @@ import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
 import Test.QuickCheck (quickCheck)
 import Data.Maybe (isNothing)
-import Debug.Trace (trace)
 
 type Var = Int
 
@@ -247,17 +246,22 @@ minOf f a b c d = minM (f b d) $ minM (f a c) $ minM (f a d) (f b c)
 maxOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
 maxOf f a b c d = maxM (f b d) $ maxM (f a d) $ maxM (f a c) (f b c)
 instance (Ord a, Num a) => Num (Range a) where
+    a + b | invalidRange a || invalidRange b = emptyRange
     Range a b + Range a' b' = Range (liftA2 (+) a a') (liftA2 (+) b b')
+    a - b | invalidRange a || invalidRange b = emptyRange
     Range a b - Range a' b' = Range (liftA2 (-) a b') (liftA2 (-) b a')
+    a * b | invalidRange a || invalidRange b = emptyRange
     Range a b * Range a' b' = Range (minOf (liftA2 (*)) a b a' b') (maxOf (liftA2 (*)) a b a' b')
+    abs a | invalidRange a = emptyRange
     abs (Range Nothing b) = Range (abs <$> b) Nothing
     abs (Range (Just a) (Just b))
       | a <= 0 && b >= 0 = Range (Just 0) (Just $ max (abs a) (abs b))
       | otherwise = sortRange (Just $ abs a) (Just $ abs b)
     abs (Range a Nothing) = Range (min 0 <$> a) Nothing
+    signum a | invalidRange a = emptyRange
     signum (Range l r) = case lb <?> rb of
         Just a -> a
-        Nothing -> Range (Just 1) (Just 0)
+        Nothing -> emptyRange
       where
         lb = case l of
           Nothing -> Range Nothing Nothing
@@ -365,14 +369,86 @@ appMod (Finite _) (Finite 0) = Nothing
 appMod (Finite a) (Finite b) = Just $ Finite $ a `mod` b
 
 
+-- works if a >= 0, b >= 0, c > 0
+modPos1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
+modPos1 _ 0 = emptyRange
+modPos1 (Range (Just a) (Just b)) c
+  | (a `mod` c) + (b-a) < c = Range (Just $ a `mod` c) (Just $ b `mod` c)
+modPos1 (Range _ _) c = Range (Just 0) (Just $ c-1)
+
+modPos2 :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+modPos2 a b 
+ | invalidRange a || invalidRange b = emptyRange
+modPos2 _ (Range (Just 0) (Just 0)) = emptyRange
+modPos2 a (Range (Just l) (Just r)) = modPos1 a (max 1 l) ||| modPos1 a r
+modPos2 a (Range (Just l) Nothing) = modPos1 a (max 1 l) &&& Range Nothing (rangeMax a)
+modPos2 _ _ = undefined
+(|||) :: (Ord a, Num a) => Range a -> Range a -> Range a
+(|||) x y = case x <||> y of
+  Nothing -> emptyRange
+  Just z -> z
+(&&&) :: (Ord a, Num a) => Range a -> Range a -> Range a
+(&&&) x y = case x <?> y of
+  Nothing -> emptyRange
+  Just z -> z
+remI :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+remI l r
+    | invalidRange l || invalidRange r = emptyRange
+    | isNeg l = negate $ remI (negate l) r
+    | isPos l = negate $ remI (negate l) r
+    | otherwise = case splitPosNegB l of
+        (a,b) -> negate (remPosL (negate a) r) ||| remPosL b r
+  where
+
+    remPosL a b 
+      | Just b' <- toPoint b = modPos1 a b'
+      | isNeg b = remPosL a (negate b)
+      | otherwise = case b of
+        Range (Just l) (Just r) -> remPosLR a (Range (Just 1) (Just $ max r (-l)))
+        Range _ _ -> remPosLR a (Range 1 Nothing)
+    remPosLR a b
+      | rangeLen a >= rangeMax b = Range (Just 0) (pred <$> rangeMax b) 
+      -- | Just (rangeLen a) >= rangeMin b = (0... (rangeLen a-1)) ||| remPosLR kk
+
+    a = modPos2 pl pr
+    b = negate $ modPos2 (negate nl) (negate nr)
+    c = negate $ (modPos2 (negate nl) r)
+    d = (modPos2 l (negate nr))
+    e 
+      | 0 `rangeIn` l && r /= (0...0) = 0...0
+      | otherwise = emptyRange
+    (nl,pl) = splitPosNegB l
+    (nr, pr) = splitPosNegB r
+    splitPosNegB x = case splitPosNeg x of
+      Just o -> o
+      Nothing
+        | isPos x -> (emptyRange, x)
+        | otherwise -> (x, emptyRange)
+
+rangeLen :: Num a => Range a -> Maybe a
+rangeLen (Range (Just a) (Just b)) = Just (b - a)
+rangeLen _ = Nothing
+
+toPoint :: Eq a1 => Range a1 -> Maybe a1
+toPoint (Range (Just a) (Just b))
+  | a == b = Just a
+toPoint _ = Nothing
+
+rangeIn :: Ord a => a -> Range a -> Bool
+rangeIn a (Range (Just l) (Just r)) = l <= a && a <= r
+rangeIn a (Range Nothing (Just b)) = a <= b
+rangeIn a (Range (Just b) Nothing) = b <= a
+rangeIn _ _ = True
+
+
 -- modI :: Range Int -> Range Int -> Range Int
 -- modI l r
---   | null combis = Range (Just 1) (Just 0)
+--   | null combis = emptyRange
 --   | otherwise = toRange (minimum combis) (maximum combis)
 --   where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appMod a b]]
 divI :: Range Int -> Range Int -> Range Int
 divI l r
-  | null combis = Range (Just 1) (Just 0)
+  | null combis = emptyRange
   | otherwise = toRange (minimum combis) (maximum combis)
   where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appDiv a b]]
 
@@ -383,14 +459,14 @@ divB :: (Show a, Integral a) => Range a -> Range a -> Range a
 divB a b = case splitPosNeg b of
     Just (lb,rb) -> case (negate (divG a (negate lb))) <||> divG a rb of
         Just o -> o
-        Nothing -> Range (Just 1) (Just 0)
+        Nothing -> emptyRange
     Nothing 
       | isPos b -> divG a b
       | otherwise -> negate (divG a (negate b))
   where
     divG :: (Show a, Integral a, Num a) => Range a -> Range a -> Range a
     divG x y
-      | invalidRange x || invalidRange y = Range (Just 1) (Just 0)
+      | invalidRange x || invalidRange y = emptyRange
     -- divisor is positive: divide by c to keep large, divide by d to move towards 0
     divG (Range x y) (Range c d)
       | x >= Just 0 = Range (x `divM` d) (y `divM` c) -- strictly positive, shrink min
@@ -404,6 +480,9 @@ divB a b = case splitPosNeg b of
 isPos :: (Num a, Ord a) => Range a -> Bool
 isPos (Range (Just a) _) = a > 0
 isPos _ = False
+isNeg :: (Num a, Ord a) => Range a -> Bool
+isNeg (Range _ (Just a)) = a < 0
+isNeg _ = False
 
 splitPosNeg :: (Num a, Ord a) => Range a -> Maybe (Range a, Range a)
 splitPosNeg (Range Nothing Nothing) = Just (Range Nothing (Just $ -1), Range (Just 1) Nothing)
@@ -476,11 +555,11 @@ instance (LiftRange a r, Enum x) => LiftRange (Range x -> a) (Range x -> r) wher
     liftRange _ _ = error "liftRange: cannot brute force infinite range"
 instance (Show a, Num a, Ord a) => LiftRange (Range a) (Range a) where
     liftRange :: [Range a] -> Range a
-    liftRange [] = Range (Just 1) (Just 0)
+    liftRange [] = emptyRange
     liftRange a = foldl1 step a
       where
         step l r = case l <||> r of
-            Nothing -> Range (Just 1) (Just 0)
+            Nothing -> emptyRange
             Just l' -> l'
 instance (Num a, Ord a) => PMonoid (Range a) where
    pempty = Range Nothing Nothing
@@ -509,9 +588,6 @@ maximumMaybe = foldl1 step
   where
     step (Just a) (Just b) = Just (max a b)
     step _ _ = Nothing
-    
--- instance TestRangeGalois (Range a -> r) where
--- testRangeGalois :: (Enum t, Ord a) => Range t -> (t -> a) -> Range a
 
 sortRange :: Ord a => Maybe a -> Maybe a -> Range a
 sortRange (Just a) (Just b)
