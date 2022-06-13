@@ -7,18 +7,67 @@
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Range where
 import qualified Data.Set as S
 import qualified Data.Map as M
 import Control.Monad.State
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty))
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..))
 import Control.Monad.Except (MonadError (..), runExceptT)
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
-import Test.QuickCheck (quickCheck)
-import Data.Maybe (isNothing)
+import Test.QuickCheck (Testable (property))
+import Data.Maybe (isNothing, isJust)
+import Test.QuickCheck.All (quickCheckAll)
+import Test.QuickCheck.Property (Property)
 
 type Var = Int
+
+ft :: (Maybe Int, Maybe Int) -> Range Int
+ft (a,b) = sortRange a b
+
+(<=?) :: POrd a => a -> a -> Bool
+(<=?) a b = case compareP a b of
+   Just LT -> True
+   Just EQ -> True
+   _ -> False
+-- implication laws for heyting algebra
+prop_impl_conj_r :: Property
+prop_impl_conj_r = property $ \(l) r -> ((ft l <-> ft r) &&& ft r) == ft l &&& ft r
+prop_impl_conj_l :: Property
+prop_impl_conj_l = property $ \(l) r -> ((ft l <-> ft r) &&& ft l) == ft l
+prop_impl_refl :: Property
+prop_impl_refl = property $ \a -> fullRange == (ft a <-> ft a)
+prop_impl_empty :: Property
+prop_impl_empty = property $ \l -> ft l <-> emptyRange == fullRange
+
+
+prop_conj_assoc :: Property
+prop_conj_assoc = property $ \a b c -> (ft a &&& ft b) &&& ft c == ft a &&& (ft b &&& ft c)
+prop_conj_idempotent :: Property
+prop_conj_idempotent = property $ \a -> (ft a &&& ft a) == ft a
+prop_conj_commutative :: Property
+prop_conj_commutative = property $ \a b -> (ft a &&& ft b) == (ft b &&& ft a)
+prop_conj_absorbing :: Property
+prop_conj_absorbing = property $ \a -> ft a &&& fullRange == ft a
+prop_conj_neutral :: Property
+prop_conj_neutral = property $ \a -> ft a &&& emptyRange == emptyRange
+prop_conj_shrinking :: Property
+prop_conj_shrinking = property $ \a b -> ft a &&& ft b <=? ft a
+
+
+
+prop_mult :: Property
+prop_mult = checkAbstraction (*)
+prop_add :: Property
+prop_add = checkAbstraction (+)
+prop_sub :: Property
+prop_sub = checkAbstraction (-)
+prop_div :: Property
+prop_div = checkAbstraction div
+prop_abs :: Property
+prop_abs = checkAbstraction1 abs
+
 
 -- Universal recipe to abstract a function: try all combinations of all possible inputs and pick the min/max results for the range
 --
@@ -29,11 +78,74 @@ type Var = Int
 --
 -- bruteForce turns any abstraction function into this brute force version
 -- useful for checking that we have the best abstraction for the galois connection, i.e. extensionally bruteForce f == f
-checkAbstraction :: (Range Int -> Range Int -> Range Int) -> IO ()
-checkAbstraction f = quickCheck $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
+checkAbstraction :: (Range Int -> Range Int -> Range Int) -> Property
+checkAbstraction f = property $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
 
-checkAbstraction1 :: (Range Int -> Range Int) -> IO ()
-checkAbstraction1 f = quickCheck $ \x -> f (fromTuple x) == bruteForce f (fromTuple x)
+checkAbstraction1 :: (Range Int -> Range Int) -> Property
+checkAbstraction1 f = property $ \x -> f (fromTuple x) == bruteForce f (fromTuple x)
+
+data Range a = Range (Maybe a) (Maybe a) 
+  deriving (Eq, Ord, Show)
+instance (Ord a, Num a) => POrd (Range a) where
+    compareP l r
+      | nL && nR = Just EQ
+      | nL = Just LT
+      | nR = Just GT
+      where
+        nL = invalidRange l
+        nR = invalidRange r
+    compareP (Range a b) (Range a' b') = (flipOrd $ compareL a a') `with` compareR b b'
+      where
+        flipOrd LT = GT
+        flipOrd GT = LT
+        flipOrd EQ = EQ
+        compareL Nothing Nothing = EQ
+        compareL Nothing _ = LT
+        compareL _ Nothing = GT
+        compareL (Just x) (Just y) = compare x y
+        compareR Nothing Nothing = EQ
+        compareR Nothing _ = GT
+        compareR _ Nothing = LT
+        compareR (Just x) (Just y) = compare x y
+        with LT GT = Nothing
+        with GT LT = Nothing
+        with x y = Just (x <> y)
+instance (Ord a, Num a) => PSemigroup (Range a) where
+    (<?>) a b
+      | invalidRange a || invalidRange b = Nothing
+    (<?>) (Range a b) (Range a' b')
+      | isEmpty l r = Nothing
+      | otherwise = Just (Range l r)
+      where
+        l = (gtMinM a a')
+        r = (ltMinM b b')
+        isEmpty (Just x) (Just y) = x > y
+        isEmpty _ _ = False
+instance (Num a, Ord a) => PMonoid (Range a) where
+   pempty = Range Nothing Nothing
+instance (Num a, Ord a) => RegularSemigroup (Range a) where
+  (<->) a b
+    | invalidRange a = emptyRange
+    | invalidRange b = fullRange
+  (<->) a b = Range newMin newMax
+    where
+      newMin
+        | rangeMin a <= rangeMin b = Nothing
+        | otherwise = rangeMin a
+      newMax
+        | isJust (rangeMax b) && (rangeMax b <= rangeMax a) = Nothing
+        | otherwise = rangeMax a
+
+instance (Ord a, Num a) => PLattice (Range a) where
+    (<||>) a b
+      | ia && ib = Nothing
+      | ia = Just b
+      | ib = Just a
+      where
+        ia = invalidRange a
+        ib = invalidRange b
+    (<||>) (Range a b) (Range a' b') = Just $ Range (minM a a') (maxM b b')
+
 
 
 testProp :: (Either (S.Set Var) (), SomeTest)
@@ -185,48 +297,22 @@ instance (Ord (f Var), Foldable f) => GetNew (S.Set (f Var)) (f Var) where
 
 
 
-data Range a = Range (Maybe a) (Maybe a) 
-  deriving (Eq, Ord, Show)
-instance (Ord a, Num a) => POrd (Range a) where
-    compareP (Range a b) (Range a' b') = compare a a' `with` compare b' b
-      where
-        with LT LT = Just LT
-        with EQ LT = Just LT
-        with LT EQ = Just LT
-        with GT GT = Just GT
-        with EQ GT = Just GT
-        with GT EQ = Just GT
-        with EQ EQ = Just EQ
-        with _ _ = Nothing
-instance (Ord a, Num a) => PSemigroup (Range a) where
-    (<?>) (Range a b) (Range a' b')
-      | isEmpty l r = Nothing
-      | otherwise = Just (Range l r)
-      where
-        l = (maxM a a')
-        r = (minM b b')
-        isEmpty (Just x) (Just y) = x > y
-        isEmpty _ _ = False
-minM :: Ord a => Maybe a -> Maybe a -> Maybe a
-minM (Just a)  (Just b) = Just $ min a b
-minM (Just a) _ = Just a
-minM _ (Just a) = Just a
-minM _ _ = Nothing
+ltMinM :: Ord a => Maybe a -> Maybe a -> Maybe a
+ltMinM (Just a)  (Just b) = Just $ min a b
+ltMinM (Just a) _ = Just a
+ltMinM _ (Just a) = Just a
+ltMinM _ _ = Nothing
 
+minM :: Ord a => Maybe a -> Maybe a -> Maybe a
+minM = liftA2 min
 maxM :: Ord a => Maybe a -> Maybe a -> Maybe a
-maxM (Just a)  (Just b) = Just $ max a b
-maxM (Just a) _ = Just a
-maxM _ (Just a) = Just a
-maxM _ _ = Nothing
-instance (Ord a, Num a) => PLattice (Range a) where
-    (<||>) a b
-      | ia && ib = Nothing
-      | ia = Just b
-      | ib = Just a
-      where
-        ia = invalidRange a
-        ib = invalidRange b
-    (<||>) (Range a b) (Range a' b') = Just $ Range (minM a a') (maxM b b')
+maxM = liftA2 max
+
+gtMinM :: Ord a => Maybe a -> Maybe a -> Maybe a
+gtMinM (Just a)  (Just b) = Just $ max a b
+gtMinM (Just a) _ = Just a
+gtMinM _ (Just a) = Just a
+gtMinM _ _ = Nothing
 
 invalidRange :: Ord a => Range a -> Bool
 invalidRange (Range (Just a) (Just b)) = a > b
@@ -242,9 +328,9 @@ instance Has SomeTest (S.Set Plus) where
     putL v s = s { testPlus = v }
 
 minOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
-minOf f a b c d = minM (f b d) $ minM (f a c) $ minM (f a d) (f b c)
+minOf f a b c d = ltMinM (f b d) $ ltMinM (f a c) $ ltMinM (f a d) (f b c)
 maxOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
-maxOf f a b c d = maxM (f b d) $ maxM (f a d) $ maxM (f a c) (f b c)
+maxOf f a b c d = gtMinM (f b d) $ gtMinM (f a d) $ gtMinM (f a c) (f b c)
 instance (Ord a, Num a) => Num (Range a) where
     a + b | invalidRange a || invalidRange b = emptyRange
     Range a b + Range a' b' = Range (liftA2 (+) a a') (liftA2 (+) b b')
@@ -286,18 +372,7 @@ instance (Integral a, Eq a) => Enum (Range a) where
   fromEnum (Range (Just i) (Just j)) | i == j = fromIntegral i
   fromEnum _ = undefined
 instance (Ord a, Bounded a, Integral a) => Integral (Range a) where
-  div (Range ma mb) (Range mc md) = Range (minOf f ma mb mc md) (maxOf g ma mb mc md)
-    where
-      f x y = case (x, y) of
-          (Just a, Just d)
-            | d /= 0 -> Just $ a `div` d
-            | otherwise -> Just maxBound
-          _ -> Nothing
-      g x y = case (x, y) of
-          (Just a, Just d)
-            | d /= 0 -> Just $ a `div` d
-            | otherwise -> Just minBound
-          _ -> Nothing
+  div = divI
   divMod = undefined
   toInteger = undefined
   quotRem = undefined
@@ -391,39 +466,46 @@ modPos2 _ _ = undefined
 (&&&) x y = case x <?> y of
   Nothing -> emptyRange
   Just z -> z
-remI :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
-remI l r
-    | invalidRange l || invalidRange r = emptyRange
-    | isNeg l = negate $ remI (negate l) r
-    | isPos l = negate $ remI (negate l) r
-    | otherwise = case splitPosNegB l of
-        (a,b) -> negate (remPosL (negate a) r) ||| remPosL b r
+-- remI :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+-- remI l r
+--     | invalidRange l || invalidRange r = emptyRange
+--     | isNeg l = negate $ remI (negate l) r
+--     | isPos l = negate $ remI (negate l) r
+--     | otherwise = case splitPosNegB l of
+--         (a,b) -> negate (remPosL (negate a) r) ||| remPosL b r
+--   where
+--     remPosL a b 
+--       | Just b' <- toPoint b = modPos1 a b'
+--       | isNeg b = remPosL a (negate b)
+--       | otherwise = case b of
+--         Range (Just l) (Just r) -> remPosLR a (Range (Just 1) (Just $ max r (-l)))
+--         Range _ _ -> remPosLR a (Range 1 Nothing)
+--     remPosLR a b
+--       | rangeLen a >= rangeMax b = Range (Just 0) (pred <$> rangeMax b) 
+--       -- | Just (rangeLen a) >= rangeMin b = (0... (rangeLen a-1)) ||| remPosLR kk
+
+--     a = modPos2 pl pr
+--     b = negate $ modPos2 (negate nl) (negate nr)
+--     c = negate $ (modPos2 (negate nl) r)
+--     d = (modPos2 l (negate nr))
+--     e 
+--       | 0 `rangeIn` l && r /= (0...0) = 0...0
+--       | otherwise = emptyRange
+--     (nl,pl) = splitPosNegB l
+--     (nr, pr) = splitPosNegB r
+--     splitPosNegB x = case splitPosNeg x of
+--       Just o -> o
+--       Nothing
+--         | isPos x -> (emptyRange, x)
+--         | otherwise -> (x, emptyRange)
+invertRange :: (Num a, Ord a) => Range a -> (Range a, Range a)
+invertRange (Range l r) = (lessThan l, greaterThan r)
   where
+    lessThan Nothing = emptyRange
+    lessThan (Just a) = Range Nothing (Just (a-1))
+    greaterThan Nothing = emptyRange
+    greaterThan (Just a) = Range (Just (a+1)) Nothing
 
-    remPosL a b 
-      | Just b' <- toPoint b = modPos1 a b'
-      | isNeg b = remPosL a (negate b)
-      | otherwise = case b of
-        Range (Just l) (Just r) -> remPosLR a (Range (Just 1) (Just $ max r (-l)))
-        Range _ _ -> remPosLR a (Range 1 Nothing)
-    remPosLR a b
-      | rangeLen a >= rangeMax b = Range (Just 0) (pred <$> rangeMax b) 
-      -- | Just (rangeLen a) >= rangeMin b = (0... (rangeLen a-1)) ||| remPosLR kk
-
-    a = modPos2 pl pr
-    b = negate $ modPos2 (negate nl) (negate nr)
-    c = negate $ (modPos2 (negate nl) r)
-    d = (modPos2 l (negate nr))
-    e 
-      | 0 `rangeIn` l && r /= (0...0) = 0...0
-      | otherwise = emptyRange
-    (nl,pl) = splitPosNegB l
-    (nr, pr) = splitPosNegB r
-    splitPosNegB x = case splitPosNeg x of
-      Just o -> o
-      Nothing
-        | isPos x -> (emptyRange, x)
-        | otherwise -> (x, emptyRange)
 
 rangeLen :: Num a => Range a -> Maybe a
 rangeLen (Range (Just a) (Just b)) = Just (b - a)
@@ -446,7 +528,7 @@ rangeIn _ _ = True
 --   | null combis = emptyRange
 --   | otherwise = toRange (minimum combis) (maximum combis)
 --   where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appMod a b]]
-divI :: Range Int -> Range Int -> Range Int
+divI :: (Integral a) => Range a -> Range a -> Range a
 divI l r
   | null combis = emptyRange
   | otherwise = toRange (minimum combis) (maximum combis)
@@ -455,7 +537,7 @@ divI l r
 
 -- Doing case splitting rather then brute-forcing all relevant points is much faster
 -- The inner divG only considers the case where the divisor is strictly positive
-divB :: (Show a, Integral a) => Range a -> Range a -> Range a
+divB :: (Integral a) => Range a -> Range a -> Range a
 divB a b = case splitPosNeg b of
     Just (lb,rb) -> case (negate (divG a (negate lb))) <||> divG a rb of
         Just o -> o
@@ -464,7 +546,7 @@ divB a b = case splitPosNeg b of
       | isPos b -> divG a b
       | otherwise -> negate (divG a (negate b))
   where
-    divG :: (Show a, Integral a, Num a) => Range a -> Range a -> Range a
+    divG :: (Integral a, Num a) => Range a -> Range a -> Range a
     divG x y
       | invalidRange x || invalidRange y = emptyRange
     -- divisor is positive: divide by c to keep large, divide by d to move towards 0
@@ -561,8 +643,6 @@ instance (Show a, Num a, Ord a) => LiftRange (Range a) (Range a) where
         step l r = case l <||> r of
             Nothing -> emptyRange
             Just l' -> l'
-instance (Num a, Ord a) => PMonoid (Range a) where
-   pempty = Range Nothing Nothing
 mkRange :: x -> Range x
 mkRange x = Range (Just x) (Just x)
 
@@ -596,3 +676,9 @@ sortRange a b = Range a b
 
 emptyRange :: Num a => Range a
 emptyRange = Range (Just 1) (Just 0)
+fullRange :: Range a
+fullRange = Range Nothing Nothing
+
+return []
+checkAll :: IO Bool
+checkAll = $quickCheckAll

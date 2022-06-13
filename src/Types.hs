@@ -16,7 +16,6 @@ import Generic.Random
 import qualified Data.Map as M
 import Control.Monad.State
     ( evalState, runState, MonadState(get, put), State )
-import Debug.Trace (traceM, trace)
 import Data.List (partition)
 import Data.Either (partitionEithers)
 import qualified Data.Map.Merge.Lazy as M
