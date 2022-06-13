@@ -25,6 +25,11 @@ import Control.Monad.Trans.Maybe ( MaybeT(..) )
 
 class POrd s where
    compareP :: s -> s -> Maybe Ordering
+(<=?) :: POrd a => a -> a -> Bool
+(<=?) a b = case compareP a b of
+   Just LT -> True
+   Just EQ -> True
+   _ -> False
 class (PMonoid s, RegularSemigroup s, PLattice s, Show s, Ord s) => IsLit s where
   -- | construct `var=True`
   isL :: Var -> s

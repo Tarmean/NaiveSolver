@@ -12,7 +12,7 @@ module Range where
 import qualified Data.Set as S
 import qualified Data.Map as M
 import Control.Monad.State
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..))
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), (<=?))
 import Control.Monad.Except (MonadError (..), runExceptT)
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
@@ -26,21 +26,19 @@ type Var = Int
 ft :: (Maybe Int, Maybe Int) -> Range Int
 ft (a,b) = sortRange a b
 
-(<=?) :: POrd a => a -> a -> Bool
-(<=?) a b = case compareP a b of
-   Just LT -> True
-   Just EQ -> True
-   _ -> False
--- implication laws for heyting algebra
-prop_impl_conj_r :: Property
-prop_impl_conj_r = property $ \(l) r -> ((ft l <-> ft r) &&& ft r) == ft l &&& ft r
-prop_impl_conj_l :: Property
-prop_impl_conj_l = property $ \(l) r -> ((ft l <-> ft r) &&& ft l) == ft l
-prop_impl_refl :: Property
-prop_impl_refl = property $ \a -> fullRange == (ft a <-> ft a)
-prop_impl_empty :: Property
-prop_impl_empty = property $ \l -> ft l <-> emptyRange == fullRange
 
+-- implication laws for heyting algebra
+prop_impl_conj_r :: Property -- (r => l) && r |- l && r
+prop_impl_conj_r = property $ \l r -> ((ft l <-> ft r) &&& ft r) == ft l &&& ft r
+prop_impl_conj_l :: Property -- (r => l) && l |- l
+prop_impl_conj_l = property $ \l r -> ((ft l <-> ft r) &&& ft l) == ft l
+prop_impl_refl :: Property -- |- (a => a)
+prop_impl_refl = property $ \a -> fullRange == (ft a <-> ft a)
+prop_impl_full :: Property -- |- (a => 1)
+prop_impl_full = property $ \a -> fullRange == (fullRange <-> ft a)
+prop_impl_empty :: Property -- |- (0 => l)
+prop_impl_empty = property $ \l -> ft l <-> emptyRange == fullRange
+-- Negation is boring because ranges aren't distributive, (l => 0) == 0
 
 prop_conj_assoc :: Property
 prop_conj_assoc = property $ \a b c -> (ft a &&& ft b) &&& ft c == ft a &&& (ft b &&& ft c)
