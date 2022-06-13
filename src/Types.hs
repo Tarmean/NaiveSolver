@@ -40,7 +40,7 @@ class (PMonoid s, RegularSemigroup s, PLattice s, Show s, Ord s) => IsLit s wher
   -- | Conditions on variable, `split x s` return
   --     Just (s|x=True, s|x=False)
   -- if x occurs in s. Afterwards, the results shouldn't refer to x.
-  -- This could be implemented via `<?>`, `maxSplitVar`, and `<->` but a more performant implementation might be possible
+  -- This could be implemented via `<?>`, `maxSplitVar`, and `==>` but a more performant implementation might be possible
   splitLit :: Var -> s -> Maybe (DD s,DD s)
   -- Check if the variable is definitely True/False
   evalVar :: Var -> s -> Maybe Bool
@@ -64,24 +64,33 @@ class (PSemigroup s) => PLattice s where
 -- | deduplicates information which is saved elsewhere
 -- FIXME: i defined this ad-hoc because I needed the operation, but is this just heyting algebras?
 class PSemigroup a => RegularSemigroup a  where
-    -- | a <-> b returns the (ideally minimum) x such that
-    --  (a <-> b) <??> b  == a <??> b
+    -- | a ==> b returns the (ideally minimum) x such that
+    --  (a ==> b) &&& a  == a &&& b
     --
     -- for bounded lattices:
-    -- a <-> a = pempty
-    -- a <&> (b <-> a) = a <&> b
-    -- b <&> (b <-> a) = b
-    -- (a <&> b) <-> c ~ (a <-> c) <&> (b <-> c), if <&> is defined
-    (<->) :: a -> a -> a
+    -- a ==> a = pempty
+    -- a <&> (a ==> b) = a <&> b
+    -- b <&> (a ==> b) = b
+    -- c ==> (a <&> b) ~ (c ==> a) <&> (c ==> b), if <&> is defined
+    (==>) :: a -> a -> a
+top :: BoundedLattice a => a
+top = pempty
+class (PMonoid s, PLattice s) => BoundedLattice s where
+    bot :: s
+    isBot :: s -> Bool
+    (&&&) :: s -> s -> s
+    a &&& b = case a <?> b of
+      Nothing -> bot
+      Just s -> s
+    (|||) :: s -> s -> s
+    a ||| b = case a <||> b of
+       Nothing -> bot
+       Just s -> s
 
 -- | more accurate than pseudoinverse in RegularSemigroup
 -- (a <> x) <> inv a  = x
 class PSemigroup a => InverseSemigroup a  where
     inv :: a -> a
-class PSemigroup s => SemiLattice s where
-    isBot :: s -> Bool
-    -- | absorbing element of <?>, neutral element of <||>
-    bot :: s
 
 testEnv :: (Bool, Bool, Bool, Bool)
 testEnv = (False,True,False,False)
@@ -211,7 +220,7 @@ mAnd inp = flip evalState pempty $ do
         (Just o,s) <- pure (runState (runMaybeT $ traverse flatAnds ls) pempty)
         env' <- liftMaybe $ env <?> s
         put env'
-        pure $ (s <-> env, concat o)
+        pure $ (env ==> s, concat o)
 
     flatAnds :: IsLit s => DD s -> MaybeT (State s) [DD s]
     flatAnds (And s ls) = do
@@ -249,7 +258,7 @@ simplify :: forall s. IsLit s => DD s -> State s (Either (DD s) (DD s))
 simplify (And s ls) = do
     (a,b) <- partitionEithers <$> (traverse simplify $ S.toList ls)
     env <- get
-    pure $ Right $  gAndS (s <-> env) $ S.fromList (a <> b)
+    pure $ Right $  gAndS (env ==> s) $ S.fromList (a <> b)
 simplify (If v l r) = do
     env <- get
     case evalVar @s v env of
@@ -331,7 +340,7 @@ emptyPMap :: PMap k v
 emptyPMap = PMap M.empty
 
 instance (Ord k, Eq v, PSemigroup v) => RegularSemigroup (PMap k v) where
-    (<->) (PMap m) (PMap m') = PMap $ M.merge M.preserveMissing M.dropMissing (M.zipWithMaybeMatched f) m m'
+    (==>) (PMap m') (PMap m) = PMap $ M.merge M.preserveMissing M.dropMissing (M.zipWithMaybeMatched f) m m'
       where
        f _ x y
          | x == y = Nothing
@@ -344,7 +353,7 @@ orBot (Just s) = And s mempty
 removeVar :: IsLit s => Var -> Bool -> s -> DD s
 removeVar v b s = case s <?> isV v b of
     Nothing -> IsFalse
-    Just s' -> And (s' <-> isV v b) mempty
+    Just s' -> And (isV v b ==> s') mempty
 
 instance IsLit (PMap Var (Val Bool)) where
     isL v = PMap $ M.singleton v (Val True)
@@ -373,7 +382,7 @@ iff v (And sl vl) (And sr vr)
   | Just o <-  sl <||> sr = mkOut o
   | not (S.null inters) = mkOut pempty
   where
-    mkOut o = gAndS o  (inters & iff v (gAndS (sl <-> o) (vl S.\\ vr)) (gAndS (sr <-> o)(vr S.\\ vl)))
+    mkOut o = gAndS o  (inters & iff v (gAndS (o ==> sl) (vl S.\\ vr)) (gAndS (o ==> sr)(vr S.\\ vl)))
     inters = S.intersection vl vr
 iff v a b = If v a b
 

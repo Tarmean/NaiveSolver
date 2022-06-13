@@ -12,7 +12,7 @@ module Range where
 import qualified Data.Set as S
 import qualified Data.Map as M
 import Control.Monad.State
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), (<=?))
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), (<=?), BoundedLattice(..), top)
 import Control.Monad.Except (MonadError (..), runExceptT)
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Applicative
@@ -24,58 +24,43 @@ import Test.QuickCheck.Property (Property)
 type Var = Int
 
 ft :: (Maybe Int, Maybe Int) -> Range Int
-ft (a,b) = sortRange a b
-
+ft (a,b)
+  | isBot (Range a b) = bot
+  | otherwise = Range a b
 
 -- implication laws for heyting algebra
-prop_impl_conj_r :: Property -- (r => l) && r |- l && r
-prop_impl_conj_r = property $ \l r -> ((ft l <-> ft r) &&& ft r) == ft l &&& ft r
-prop_impl_conj_l :: Property -- (r => l) && l |- l
-prop_impl_conj_l = property $ \l r -> ((ft l <-> ft r) &&& ft l) == ft l
-prop_impl_refl :: Property -- |- (a => a)
-prop_impl_refl = property $ \a -> fullRange == (ft a <-> ft a)
-prop_impl_full :: Property -- |- (a => 1)
-prop_impl_full = property $ \a -> fullRange == (fullRange <-> ft a)
-prop_impl_empty :: Property -- |- (0 => l)
-prop_impl_empty = property $ \l -> ft l <-> emptyRange == fullRange
--- Negation is boring because ranges aren't distributive, (l => 0) == 0
+prop_impl_conj_r, prop_impl_conj_l, prop_impl_refl , prop_impl_full  , prop_impl_empty :: Property
+prop_impl_conj_l = property $ \l r -> ((ft l ==> ft r) &&& ft l) == ft l &&& ft r
+prop_impl_conj_r = property $ \l r -> ((ft l ==> ft r) &&& ft r) == ft r
+prop_impl_refl = property $ \a -> top == (ft a ==> ft a)
+prop_impl_full = property $ \a -> top == (ft a ==> top)
+prop_impl_empty = property $ \l -> bot ==> ft l== top
+-- Negation is boring because ranges aren't distributive, 
+-- not 0 == 1
+-- not x == 0
 
-prop_conj_assoc :: Property
+prop_conj_assoc, prop_conj_idempotent, prop_conj_commutative, prop_conj_absorbing, prop_conj_neutral, prop_conj_shrinking :: Property
 prop_conj_assoc = property $ \a b c -> (ft a &&& ft b) &&& ft c == ft a &&& (ft b &&& ft c)
-prop_conj_idempotent :: Property
 prop_conj_idempotent = property $ \a -> (ft a &&& ft a) == ft a
-prop_conj_commutative :: Property
 prop_conj_commutative = property $ \a b -> (ft a &&& ft b) == (ft b &&& ft a)
-prop_conj_absorbing :: Property
-prop_conj_absorbing = property $ \a -> ft a &&& fullRange == ft a
-prop_conj_neutral :: Property
-prop_conj_neutral = property $ \a -> ft a &&& emptyRange == emptyRange
-prop_conj_shrinking :: Property
+prop_conj_absorbing = property $ \a -> ft a &&& top == ft a
+prop_conj_neutral = property $ \a -> ft a &&& bot == bot
 prop_conj_shrinking = property $ \a b -> ft a &&& ft b <=? ft a
 
-prop_disj_assoc :: Property
+prop_disj_assoc, prop_disj_idempotent, prop_disj_commutative, prop_disj_absorbing, prop_disj_neutral, prop_disj_shrinking :: Property
 prop_disj_assoc = property $ \a b c -> (ft a ||| ft b) ||| ft c == ft a ||| (ft b ||| ft c)
-prop_disj_idempotent :: Property
 prop_disj_idempotent = property $ \a -> (ft a ||| ft a) == ft a
-prop_disj_commutative :: Property
 prop_disj_commutative = property $ \a b -> (ft a ||| ft b) == (ft b ||| ft a)
-prop_disj_absorbing :: Property
-prop_disj_absorbing = property $ \a -> ft a ||| fullRange == fullRange
-prop_disj_neutral :: Property
-prop_disj_neutral = property $ \a -> ft a ||| emptyRange == ft a
-prop_disj_shrinking :: Property
+prop_disj_absorbing = property $ \a -> ft a ||| top == top
+prop_disj_neutral = property $ \a -> ft a ||| bot == ft a
 prop_disj_shrinking = property $ \a b -> ft a <=? (ft a ||| ft b)
 
 
-prop_mult :: Property
+prop_mult, prop_add, prop_sub, prop_div, prop_abs :: Property
 prop_mult = checkAbstraction (*)
-prop_add :: Property
 prop_add = checkAbstraction (+)
-prop_sub :: Property
 prop_sub = checkAbstraction (-)
-prop_div :: Property
 prop_div = checkAbstraction div
-prop_abs :: Property
 prop_abs = checkAbstraction1 abs
 
 
@@ -104,8 +89,8 @@ instance (Ord a, Num a) => POrd (Range a) where
       | nL = Just LT
       | nR = Just GT
       where
-        nL = invalidRange l
-        nR = invalidRange r
+        nL = isBot l
+        nR = isBot r
     compareP (Range a b) (Range a' b') = (flipOrd $ compareL a a') `with` compareR b b'
       where
         flipOrd LT = GT
@@ -124,7 +109,7 @@ instance (Ord a, Num a) => POrd (Range a) where
         with x y = Just (x <> y)
 instance (Ord a, Num a) => PSemigroup (Range a) where
     (<?>) a b
-      | invalidRange a || invalidRange b = Nothing
+      | isBot a || isBot b = Nothing
     (<?>) (Range a b) (Range a' b')
       | isEmpty l r = Nothing
       | otherwise = Just (Range l r)
@@ -136,10 +121,10 @@ instance (Ord a, Num a) => PSemigroup (Range a) where
 instance (Num a, Ord a) => PMonoid (Range a) where
    pempty = Range Nothing Nothing
 instance (Num a, Ord a) => RegularSemigroup (Range a) where
-  (<->) a b
-    | invalidRange a = emptyRange
-    | invalidRange b = fullRange
-  (<->) a b = Range newMin newMax
+  (==>) b a
+    | isBot b = top
+    | isBot a = bot
+  (==>) b a = Range newMin newMax
     where
       newMin
         | rangeMin a <= rangeMin b = Nothing
@@ -154,10 +139,14 @@ instance (Ord a, Num a) => PLattice (Range a) where
       | ia = Just b
       | ib = Just a
       where
-        ia = invalidRange a
-        ib = invalidRange b
+        ia = isBot a
+        ib = isBot b
     (<||>) (Range a b) (Range a' b') = Just $ Range (minM a a') (maxM b b')
 
+instance (Num a, Ord a) => BoundedLattice (Range a) where
+    bot = Range (Just 1) (Just 0)
+    isBot (Range (Just a) (Just b)) = a > b
+    isBot _ = False
 
 
 testProp :: (Either (S.Set Var) (), SomeTest)
@@ -197,10 +186,6 @@ type Prop s e = (Var -> Maybe e) -> s -> Maybe e
 data PlusE s = Plus s s s
   deriving (Eq, Ord, Show, Foldable)
 type Plus = PlusE Var
-
-class CProp s e where
-    prop :: Prop s e
-
 
 
 class GetNew c t | c -> t where
@@ -326,9 +311,6 @@ gtMinM (Just a) _ = Just a
 gtMinM _ (Just a) = Just a
 gtMinM _ _ = Nothing
 
-invalidRange :: Ord a => Range a -> Bool
-invalidRange (Range (Just a) (Just b)) = a > b
-invalidRange _ = False
 
 data SomeTest = SomeTest { testEnv :: (PropEnv (Range Int)), testPlus :: (S.Set Plus) }
   deriving (Eq, Ord, Show)
@@ -344,22 +326,22 @@ minOf f a b c d = ltMinM (f b d) $ ltMinM (f a c) $ ltMinM (f a d) (f b c)
 maxOf :: (Ord s, a ~ Maybe s) => (a -> a -> a) -> a -> a -> a -> a -> a
 maxOf f a b c d = gtMinM (f b d) $ gtMinM (f a d) $ gtMinM (f a c) (f b c)
 instance (Ord a, Num a) => Num (Range a) where
-    a + b | invalidRange a || invalidRange b = emptyRange
+    a + b | isBot a || isBot b = bot
     Range a b + Range a' b' = Range (liftA2 (+) a a') (liftA2 (+) b b')
-    a - b | invalidRange a || invalidRange b = emptyRange
+    a - b | isBot a || isBot b = bot
     Range a b - Range a' b' = Range (liftA2 (-) a b') (liftA2 (-) b a')
-    a * b | invalidRange a || invalidRange b = emptyRange
+    a * b | isBot a || isBot b = bot
     Range a b * Range a' b' = Range (minOf (liftA2 (*)) a b a' b') (maxOf (liftA2 (*)) a b a' b')
-    abs a | invalidRange a = emptyRange
+    abs a | isBot a = bot
     abs (Range Nothing b) = Range (abs <$> b) Nothing
     abs (Range (Just a) (Just b))
       | a <= 0 && b >= 0 = Range (Just 0) (Just $ max (abs a) (abs b))
       | otherwise = sortRange (Just $ abs a) (Just $ abs b)
     abs (Range a Nothing) = Range (min 0 <$> a) Nothing
-    signum a | invalidRange a = emptyRange
+    signum a | isBot a = bot
     signum (Range l r) = case lb <?> rb of
         Just a -> a
-        Nothing -> emptyRange
+        Nothing -> bot
       where
         lb = case l of
           Nothing -> Range Nothing Nothing
@@ -375,7 +357,7 @@ instance (Ord a, Num a) => Num (Range a) where
             | otherwise -> Range Nothing (Just 1)
     fromInteger i = Range (Just $ fromInteger i) (Just $ fromInteger i)
     negate r
-      | invalidRange r = r
+      | isBot r = r
     negate (Range a b) = Range (negate <$> b) (negate <$> a)
 instance (Ord a, Real a) => Real (Range a) where
   toRational = undefined
@@ -458,29 +440,21 @@ appMod (Finite a) (Finite b) = Just $ Finite $ a `mod` b
 
 -- works if a >= 0, b >= 0, c > 0
 modPos1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
-modPos1 _ 0 = emptyRange
+modPos1 _ 0 = bot
 modPos1 (Range (Just a) (Just b)) c
   | (a `mod` c) + (b-a) < c = Range (Just $ a `mod` c) (Just $ b `mod` c)
 modPos1 (Range _ _) c = Range (Just 0) (Just $ c-1)
 
 modPos2 :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
 modPos2 a b 
- | invalidRange a || invalidRange b = emptyRange
-modPos2 _ (Range (Just 0) (Just 0)) = emptyRange
+ | isBot a || isBot b = bot
+modPos2 _ (Range (Just 0) (Just 0)) = bot
 modPos2 a (Range (Just l) (Just r)) = modPos1 a (max 1 l) ||| modPos1 a r
 modPos2 a (Range (Just l) Nothing) = modPos1 a (max 1 l) &&& Range Nothing (rangeMax a)
 modPos2 _ _ = undefined
-(|||) :: (Ord a, Num a) => Range a -> Range a -> Range a
-(|||) x y = case x <||> y of
-  Nothing -> emptyRange
-  Just z -> z
-(&&&) :: (Ord a, Num a) => Range a -> Range a -> Range a
-(&&&) x y = case x <?> y of
-  Nothing -> emptyRange
-  Just z -> z
 -- remI :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
 -- remI l r
---     | invalidRange l || invalidRange r = emptyRange
+--     | isBot l || isBot r = bot
 --     | isNeg l = negate $ remI (negate l) r
 --     | isPos l = negate $ remI (negate l) r
 --     | otherwise = case splitPosNegB l of
@@ -502,20 +476,20 @@ modPos2 _ _ = undefined
 --     d = (modPos2 l (negate nr))
 --     e 
 --       | 0 `rangeIn` l && r /= (0...0) = 0...0
---       | otherwise = emptyRange
+--       | otherwise = bot
 --     (nl,pl) = splitPosNegB l
 --     (nr, pr) = splitPosNegB r
 --     splitPosNegB x = case splitPosNeg x of
 --       Just o -> o
 --       Nothing
---         | isPos x -> (emptyRange, x)
---         | otherwise -> (x, emptyRange)
+--         | isPos x -> (bot, x)
+--         | otherwise -> (x, bot)
 invertRange :: (Num a, Ord a) => Range a -> (Range a, Range a)
 invertRange (Range l r) = (lessThan l, greaterThan r)
   where
-    lessThan Nothing = emptyRange
+    lessThan Nothing = bot
     lessThan (Just a) = Range Nothing (Just (a-1))
-    greaterThan Nothing = emptyRange
+    greaterThan Nothing = bot
     greaterThan (Just a) = Range (Just (a+1)) Nothing
 
 
@@ -535,32 +509,20 @@ rangeIn a (Range (Just b) Nothing) = b <= a
 rangeIn _ _ = True
 
 
--- modI :: Range Int -> Range Int -> Range Int
--- modI l r
---   | null combis = emptyRange
---   | otherwise = toRange (minimum combis) (maximum combis)
---   where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appMod a b]]
-divI :: (Integral a) => Range a -> Range a -> Range a
-divI l r
-  | null combis = emptyRange
-  | otherwise = toRange (minimum combis) (maximum combis)
-  where combis = [ o | a <- extremePoints l, Just b <- markantPoints r, Just o <- [appDiv a b]]
-
-
 -- Doing case splitting rather then brute-forcing all relevant points is much faster
 -- The inner divG only considers the case where the divisor is strictly positive
-divB :: (Integral a) => Range a -> Range a -> Range a
-divB a b = case splitPosNeg b of
+divI :: (Integral a) => Range a -> Range a -> Range a
+divI a b = case splitPosNeg b of
     Just (lb,rb) -> case (negate (divG a (negate lb))) <||> divG a rb of
         Just o -> o
-        Nothing -> emptyRange
+        Nothing -> bot
     Nothing 
       | isPos b -> divG a b
       | otherwise -> negate (divG a (negate b))
   where
     divG :: (Integral a, Num a) => Range a -> Range a -> Range a
     divG x y
-      | invalidRange x || invalidRange y = emptyRange
+      | isBot x || isBot y = bot
     -- divisor is positive: divide by c to keep large, divide by d to move towards 0
     divG (Range x y) (Range c d)
       | x >= Just 0 = Range (x `divM` d) (y `divM` c) -- strictly positive, shrink min
@@ -589,55 +551,6 @@ splitPosNeg (Range (Just a) (Just b))
 splitPosNeg _ = Nothing
 
 
-extremePoints :: (Ord a, Num a) => Range a -> [MaybeInf a]
-extremePoints (Range x y) = [x', y']
-  where
-    x' = case x of
-      Just a -> Finite a
-      Nothing -> NegInf
-    y' = case y of
-      Just a -> Finite a
-      Nothing -> PlusInf
-markantPoints :: (Ord a, Num a) => Range a -> [Maybe (MaybeInf a)]
-markantPoints r = [Finite <$> (smallestPos r), largestPos r, Finite <$> (smallestNeg r), largestNeg r]
-toRange :: MaybeInf a -> MaybeInf a -> Range a
-toRange (NegInf) PlusInf = Range Nothing Nothing
-toRange (Finite a) PlusInf = Range (Just a) Nothing
-toRange (NegInf) (Finite a) = Range Nothing (Just a)
-toRange (Finite a) (Finite b) = Range (Just a) (Just b)
-toRange _ _ = error "impossible"
-
-data Interval a = I a a
-  deriving (Eq, Ord, Show)
-idiv :: Integral a => Interval a -> Interval a -> Interval a
-idiv (I l u) (I l' u') =
-  if l' <= 0 && 0 <= u' then undefined else I
-    (min (l `Prelude.div` max 1 l') (u `Prelude.div` min (-1) u'))
-    (max (u `Prelude.div` max 1 l') (l `Prelude.div` min (-1) u'))
-
--- min (a...b mod x)
--- if b-a >= x then 0
---
---r = a+z
---, z < x
--- offset = a mod x
--- (a+z) mod x
---
--- offset + z >= x = offset+z - x
--- otherwise = offset+z
---
--- solve for minimum:
---
--- if (a `mod` x + (b-a)) > x
--- then 0
--- else a
---
--- max:
--- if (a `mod` x + (b-a)) >= x
--- then x-1
--- else b `mod` x
-
-
 bruteForce :: forall r. (LiftRange r r) => r -> r
 bruteForce f = liftRange [f]
 
@@ -649,11 +562,11 @@ instance (LiftRange a r, Enum x) => LiftRange (Range x -> a) (Range x -> r) wher
     liftRange _ _ = error "liftRange: cannot brute force infinite range"
 instance (Show a, Num a, Ord a) => LiftRange (Range a) (Range a) where
     liftRange :: [Range a] -> Range a
-    liftRange [] = emptyRange
+    liftRange [] = bot
     liftRange a = foldl1 step a
       where
         step l r = case l <||> r of
-            Nothing -> emptyRange
+            Nothing -> bot
             Just l' -> l'
 mkRange :: x -> Range x
 mkRange x = Range (Just x) (Just x)
@@ -685,11 +598,6 @@ sortRange :: Ord a => Maybe a -> Maybe a -> Range a
 sortRange (Just a) (Just b)
   | a > b = Range (Just b) (Just a)
 sortRange a b = Range a b
-
-emptyRange :: Num a => Range a
-emptyRange = Range (Just 1) (Just 0)
-fullRange :: Range a
-fullRange = Range Nothing Nothing
 
 return []
 checkAll :: IO Bool
