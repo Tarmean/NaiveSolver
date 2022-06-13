@@ -55,6 +55,18 @@ prop_conj_neutral = property $ \a -> ft a &&& emptyRange == emptyRange
 prop_conj_shrinking :: Property
 prop_conj_shrinking = property $ \a b -> ft a &&& ft b <=? ft a
 
+prop_disj_assoc :: Property
+prop_disj_assoc = property $ \a b c -> (ft a ||| ft b) ||| ft c == ft a ||| (ft b ||| ft c)
+prop_disj_idempotent :: Property
+prop_disj_idempotent = property $ \a -> (ft a ||| ft a) == ft a
+prop_disj_commutative :: Property
+prop_disj_commutative = property $ \a b -> (ft a ||| ft b) == (ft b ||| ft a)
+prop_disj_absorbing :: Property
+prop_disj_absorbing = property $ \a -> ft a ||| fullRange == fullRange
+prop_disj_neutral :: Property
+prop_disj_neutral = property $ \a -> ft a ||| emptyRange == ft a
+prop_disj_shrinking :: Property
+prop_disj_shrinking = property $ \a b -> ft a <=? (ft a ||| ft b)
 
 
 prop_mult :: Property
@@ -78,6 +90,8 @@ prop_abs = checkAbstraction1 abs
 --
 -- bruteForce turns any abstraction function into this brute force version
 -- useful for checking that we have the best abstraction for the galois connection, i.e. extensionally bruteForce f == f
+--
+-- Note that we cannot (constructively) do this for infinite ranges
 checkAbstraction :: (Range Int -> Range Int -> Range Int) -> Property
 checkAbstraction f = property $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
 
