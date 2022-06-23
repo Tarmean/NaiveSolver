@@ -23,7 +23,18 @@ import Data.Maybe (isJust, isNothing)
 import Control.Applicative ( Alternative(empty) )
 import Control.Monad.Trans.Maybe ( MaybeT(..) )
 
+class PContains s where
+   -- compareC a b == Just LT
+   -- \forall x \in a. x \in b
+   compareC :: s -> s -> Maybe Ordering
+contains :: PContains a => a -> a -> Bool
+contains a b = case compareC a b of
+   Just LT -> True
+   Just EQ -> True
+   _ -> False
 class POrd s where
+   -- compareP a b == Just LT
+   -- \forall x \in a. \forall y \in b. x <= y
    compareP :: s -> s -> Maybe Ordering
 (<=?) :: POrd a => a -> a -> Bool
 (<=?) a b = case compareP a b of
@@ -92,8 +103,8 @@ class (PMonoid s, PLattice s) => BoundedLattice s where
 class PSemigroup a => InverseSemigroup a  where
     inv :: a -> a
 
-testEnv :: (Bool, Bool, Bool, Bool)
-testEnv = (False,True,False,False)
+bddTestEnv :: (Bool, Bool, Bool, Bool)
+bddTestEnv = (False,True,False,False)
 bddTest :: BExpr
 bddTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
 
@@ -318,6 +329,14 @@ instance (Ord k, PLattice v) => PLattice (PMap k v) where
 
 newtype Val a = Val {unVal :: a}
   deriving (Eq, Ord, Show)
+instance Eq a => PContains (Val a) where
+    compareC a b
+      | a == b = Just EQ
+      | otherwise = Nothing
+instance Eq a => POrd (Val a) where
+    compareP a b
+      | a == b = Just EQ
+      | otherwise = Nothing
 instance Eq a => PSemigroup (Val a) where
     (<?>) (Val a) (Val b) = if a == b then Just (Val a) else Nothing
 instance (Eq a) => PLattice (Val a) where

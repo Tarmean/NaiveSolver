@@ -26,8 +26,10 @@ source-repository head
 library
   exposed-modules:
       Arith
+      FiniteDomains
       Lib
       MinMax
+      Propagator
       Range
       Test
       Types
