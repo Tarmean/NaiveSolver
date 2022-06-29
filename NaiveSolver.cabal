@@ -48,6 +48,7 @@ library
     , ghc-prim
     , lens
     , mtl
+    , prettyprinter
     , text
     , transformers
     , vector
@@ -71,6 +72,7 @@ executable NaiveSolver-exe
     , ghc-prim
     , lens
     , mtl
+    , prettyprinter
     , text
     , transformers
     , vector
@@ -95,6 +97,7 @@ test-suite NaiveSolver-test
     , ghc-prim
     , lens
     , mtl
+    , prettyprinter
     , text
     , transformers
     , vector

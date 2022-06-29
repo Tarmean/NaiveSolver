@@ -30,6 +30,7 @@ dependencies:
 - text
 - ghc-prim
 - vector
+- prettyprinter
 
 library:
   source-dirs: src

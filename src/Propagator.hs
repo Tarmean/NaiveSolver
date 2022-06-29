@@ -49,7 +49,7 @@ type APropC s m s0 = (
         Has s0 (PropEnv s)
     )
 
-class (MonadState s0 m) => PropsFor m s0 | m -> s0 where
+class (MonadState s0 m) => PropsFor m s0 where
     theProps :: ExceptT (S.Set Var) m Bool
 instance (MonadState SomeTest m) => PropsFor m SomeTest  where
   theProps = do
@@ -115,6 +115,12 @@ ev :: (MonadProp s m) => Var -> m s
 ev v = tryEv v >>= \case
    Nothing -> throwError Nothing
    Just s -> return s
+outOver :: forall s m. MonadProp s m => String -> s -> (s -> s) -> Var -> m ()
+outOver dbgs zer f v = do
+    mo <- tryEv v
+    case mo of
+      Nothing -> out dbgs v (f zer)
+      Just o -> out dbgs v (f o)
 type Prop s e = (Var -> Maybe e) -> s -> Maybe e
 
 
@@ -162,7 +168,7 @@ instance Monad m => MonadReason (TrackReadsT m) where
 
 type Debug e = (Show e, Typeable e)
 dbg :: Applicative f => String -> f ()
-dbg s = traceM s
+dbg s = pure () -- traceM s
 
 addElem :: forall s. (Debug s, PSemigroup s, PContains s) => String -> Var -> s -> S.Set Var -> PropEnv s -> Either (S.Set Var) (PropEnv s, Change)
 addElem dbgS var new rns PropEnv {..} = case M.lookup var known of
