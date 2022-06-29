@@ -27,6 +27,7 @@ library
   exposed-modules:
       Arith
       FiniteDomains
+      IncrementalDatalog
       Lib
       MinMax
       Propagator
