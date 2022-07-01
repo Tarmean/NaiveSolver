@@ -9,6 +9,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 module IncrementalDatalog where
 import Language.KURE as K
 
@@ -33,9 +35,75 @@ import Data.String
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Data.IORef as IOR
 import GHC.Generics (Generic)
-import Debug.Trace (trace)
+import Debug.Trace (trace, traceM)
 import Control.Arrow
+import Data.Kind (Type)
+import Control.Monad.State.Strict
 
+
+
+-- ala Lazy depth first search and linear graph algorithms in Haskell
+-- we mostly use the scc algorithm for dependency analysis to split recursive
+-- binding groups
+type Graph k = M.Map k (S.Set k)
+transposeG :: Ord k => Graph k -> Graph k
+transposeG g = M.fromListWith S.union $ do
+  (k, s) <- M.toList g
+  k' <- S.toList s
+  return (k', S.singleton k)
+data RoseTree a = Node { val ::  a, children :: [RoseTree a] }
+    deriving (Generic, Eq, Ord, Show)
+type Forest a = [RoseTree a]
+dfs :: Ord k => [k] -> Graph k -> Forest k
+dfs ls g = concat $ evalState (traverse go ls) S.empty
+  where
+    go l = do
+        s <- get
+        if S.member l s
+        then pure []
+        else do
+            put (S.insert l s)
+            cs <- traverse go $ S.toList $ M.findWithDefault mempty l g
+            pure [Node l (concat cs)]
+dff :: Ord k => Graph k -> Forest k
+dff g = dfs (M.keys g) g
+postOrder :: RoseTree k -> [k]
+postOrder (Node k ls) = concatMap postOrder ls ++ [k]
+inOrder :: Ord k => RoseTree k -> [k]
+inOrder (Node k ls) = k : concatMap inOrder ls
+postOrd :: Ord k => Graph k -> [k]
+postOrd = concatMap postOrder . dff
+topoSort :: Ord k => Graph k -> [k]
+topoSort = reverse . postOrd
+
+scc :: Ord k => Graph k -> [RoseTree k]
+scc g = dfs (topoSort (transposeG g)) g
+
+
+sccTest :: M.Map Var (S.Set Var)
+sccTest = M.fromList
+        [ (a, S.fromList [b,c])
+        , (b, S.fromList [a,f])
+        , (e, S.fromList [a,f])
+        , (f, S.fromList [g])
+        , (c, S.fromList [b,g,h])
+        , (d, S.fromList [c])
+        , (g, S.fromList [f])
+        , (h, S.fromList [g,d])
+        , (i, S.fromList [d,h])
+        ]
+  where
+    a = "a"
+    b = "b"
+    c = "c"
+    d = "d"
+    e = "e"
+    f = "f"
+    g = "g"
+    h = "h"
+    i = "i"
+-- >>> inOrder <$> scc sccTest 
+-- [[f_4,g_7],[a_1,b_2,c_5,h_8,d_6],[e_3],[i_9]]
 
 {-# NOINLINE uniq_hack #-}
 uniq_hack :: IOR.IORef Int
@@ -52,9 +120,14 @@ data Var = Var { ident :: !Ident, uniq :: !Int }
     deriving (Eq, Ord)
 instance Show Var where
     show Var {..} = ident._0 <> "_" <> show uniq
-data ADT d = App Var [ADT d] | V Var | Prior (ADT d) | Diff (ADT d) | Integrate (ADT d) | Let [(d, Var, (ADT d))] (ADT d) | Abs Var (ADT d) | Iff Var (ADT d) (ADT d)
+data ADT d = App d Var [ADT d] | V Var | Prior d (ADT d) | Diff d (ADT d) | Integrate d (ADT d) | Let d [(Var, (ADT d))] (ADT d) | Abs d Var (ADT d) | Iff d (ADT d) (ADT d) (ADT d)
     deriving (Show, Eq, Ord)
 
+algebra :: Algebra d s => d s -> s
+algebra = algebraM
+instance AlgebraM a s () where
+   algebraM _ = ()
+   
 class Analysis s where
    inAlt :: s -> s -> s
    inSeq :: s -> s -> s
@@ -68,6 +141,11 @@ class Analysis s where
    botA :: s
 data MAna k v = MAna { elems :: M.Map k v } | MBot
     deriving (Show, Eq, Ord)
+instance WithoutVars (MAna Var v) where
+    withoutVars ls (MAna v) = MAna (foldr M.delete v ls)
+    withoutVars _ MBot = MBot
+instance WithoutVars () where
+    withoutVars _ _ = ()
 instance (Eq s, Ord k, Analysis s) => Analysis (MAna k s) where
    inAlt MBot a = a
    inAlt a MBot = a
@@ -132,22 +210,22 @@ findFixpointBW step r0
 --        steppedFrontier = M.intersectionWith allJoinA frontier.elems step
 
 
-findFixpointBW' :: (Show Var, Show s, Eq s, Analysis s) => [(d, Var, MAna Var s)] -> MAna Var s -> MAna Var s
-findFixpointBW' l r = findFixpointBW (M.fromList [(v,o) | (_,v,o) <- l]) r
+findFixpointBW' :: (Show Var, Show s, Eq s, Analysis s) => [(Var, MAna Var s)] -> MAna Var s -> MAna Var s
+findFixpointBW' l r = findFixpointBW (M.fromList l) r
 
 mkAna :: Var -> s -> MAna Var s
 mkAna v s = MAna $ M.singleton v s
-data instance Step (ADT d) r = AppF Var [r] | VF Var | PriorF r | DiffF r | IntegrateF r | LetF [(d, Var, r)] r | AbsF Var r | IffF Var r r
+data ADTF r = AppF Var [r] | VF Var | PriorF r | DiffF r | IntegrateF r | LetF [(Var, r)] r | AbsF Var r | IffF r r r
     deriving (Show, Eq, Ord, Foldable, Functor)
-instance Algebra (ADT d) (MAna Var Arity) where
-  algebra (VF var) = mkAna var usedOnce
-  algebra (PriorF f) = f
-  algebra (AppF f ls) = foldr inSeq topA (mkAna f usedOnce : ls)
-  algebra (DiffF f) = f
-  algebra (IntegrateF f) = f
-  algebra (LetF l f) = findFixpointBW' l f
-  algebra (AbsF _ f) = f
-  algebra (IffF v l r) = inSeq (mkAna v usedOnce) (l `inAlt` r)
+instance AlgebraM ADTF (MAna Var Arity) (MAna Var Arity) where
+  algebraM (VF var) = mkAna var usedOnce
+  algebraM (PriorF f) = f
+  algebraM (AppF f ls) = foldr inSeq topA (mkAna f usedOnce : ls)
+  algebraM (DiffF f) = f
+  algebraM (IntegrateF f) = f
+  algebraM (LetF l f) = findFixpointBW' l f
+  algebraM (AbsF _ f) = f
+  algebraM (IffF v l r) = inSeq v (l `inAlt` r)
 
 --            Zero-Many
 --             /     \
@@ -206,26 +284,30 @@ instance Analysis Terminates where
   topA = Terminates
   botA = DoesNotTerminate
 
-data family Step d a
+type family Step d :: Type -> Type
 class Functor (Step d) => InjStep d where
     injStep :: d -> Step d d
+type instance Step (ADT d) = ADTF
 instance InjStep (ADT d) where
     injStep (V v) = VF v
-    injStep (Prior f) = PriorF f
-    injStep (App f ls) = AppF f ls
-    injStep (Diff f) = DiffF f
-    injStep (Integrate f) = IntegrateF f
-    injStep (Let l f) = LetF l f
-    injStep (Abs v f) = AbsF v f
-    injStep (Iff v l r) = IffF v l r
+    injStep (Prior _ f) = PriorF f
+    injStep (App _ f ls) = AppF f ls
+    injStep (Diff _ f) = DiffF f
+    injStep (Integrate _ f) = IntegrateF f
+    injStep (Let _ l f) = LetF l f
+    injStep (Abs _ v f) = AbsF v f
+    injStep (Iff _ v l r) = IffF v l r
 
 mutual :: (InjStep d) => (Step d (a,b) -> a) -> (Step d (a,b) -> b) -> d -> (a,b)
 mutual f g = (f &&& g) . fmap (mutual f g) . injStep
 
-cata :: (InjStep d, Algebra d a) => d -> a
+cata :: (InjStep d, Algebra (Step d) a) => d -> a
 cata = algebra . fmap cata . injStep
-class Algebra d s where
-   algebra :: Step d s -> s
+
+class AlgebraM d s t where
+   algebraM :: d s -> t
+type Algebra d s = AlgebraM d s s
+
 newtype Used = Used { vars :: S.Set Var}
     deriving (Show, Eq, Ord)
     deriving (Semigroup, Monoid) via S.Set Var
@@ -247,16 +329,50 @@ dropVars vs Ctx{..} = Ctx{in_scope = MM.merge MM.preserveMissing (MM.mapMissing 
     iff p v
       | p v = Just v
       | otherwise = Nothing
-instance K.Walker Context (ADT d) where
+instance (WithoutVars d, Algebra ADTF d) => K.Walker Context (ADT d) where
   allR f = transform $ \c v -> case v of
-    App s ts -> App s <$> traverse (applyT f c) ts
+    App _ s ts -> appT  s <$> traverse (applyT f c) ts
     V s -> pure $ V s
-    Prior x -> Prior <$> applyT f c x
-    Diff x -> Diff <$> applyT f c x
-    Integrate x -> Integrate <$> applyT f c x
-    Let xs x -> Let <$> traverse (\(t,n,b) -> (t,n,) <$> applyT f c b) xs <*> applyT f c x
-    Abs s x -> Abs s <$> applyT f c x
-    Iff s x y -> Iff s <$> applyT f c x <*> applyT f c y
+    Prior _ x -> priorT <$> applyT f c x
+    Diff _ x -> diffT <$> applyT f c x
+    Integrate _ x -> integrateT <$> applyT f c x
+    Let _ xs x -> letT <$> traverse (\(n,b) -> (n,) <$> applyT f c b) xs <*> applyT f c x
+    Abs _ s x -> absT s <$> applyT f c x
+    Iff _ s x y -> iffT <$> applyT f c s <*> applyT f c x <*> applyT f c y
+
+class WithoutVars d where
+    withoutVars :: [Var] -> d -> d
+
+getAna :: forall d. (WithoutVars d, Algebra ADTF d) => ADT d -> d
+getAna (V v) = algebra (VF v)
+getAna (Prior d _) = d
+getAna (App d _ _) = d
+getAna (Diff d _) = d
+getAna (Integrate d _) = d
+getAna (Let d ls _) = withoutVars (map fst ls) d
+getAna (Abs d v _) = withoutVars [v]d
+getAna (Iff d _ _ _) = d
+
+letT :: (WithoutVars d, Algebra ADTF d) => [(Var, ADT d)] -> ADT d -> ADT d
+letT ls r = Let (algebra $ LetF [ (v, getAna f) | (v, f) <- ls ] (getAna r)) ls r
+
+integrateT :: (WithoutVars d, Algebra ADTF d) => ADT d -> ADT d
+integrateT d = Integrate (algebra $ IntegrateF (getAna d)) d
+
+diffT :: (WithoutVars d, Algebra ADTF d) => ADT d -> ADT d
+diffT d = Diff (algebra $ DiffF (getAna d)) d
+
+priorT :: (WithoutVars d, Algebra ADTF d) => ADT d -> ADT d
+priorT p = Prior (algebra $ PriorF (getAna p)) p
+
+appT :: (WithoutVars d, Algebra ADTF d) => Var -> [ADT d] -> ADT d
+appT v ls = App (algebra $ AppF v (map getAna ls)) v ls
+
+absT :: (WithoutVars d, Algebra ADTF d) => Var -> ADT d -> ADT d
+absT v l = Abs (algebra (AbsF v (getAna l))) v l
+
+iffT :: (WithoutVars d, Algebra ADTF d) => ADT d -> ADT d -> ADT d -> ADT d
+iffT e l r = Iff (algebra $ IffF (getAna e) (getAna l) (getAna r)) e l r
 
 
 
@@ -268,8 +384,8 @@ instance IsString Var where
 
 
 
-test :: ADT Info
-test = (Let [(None, b, App "nono" [])] (Let [(None, a, (Iff b (V b) (V a)))] (V a))) 
+test :: ADT (MAna Var Arity)
+test = (letT [(b, appT "nono" [])] (letT [(a, (iffT (V b) (V b) (V a)))] (V a))) 
   where
     a = "a"
     b = "b"
@@ -278,10 +394,10 @@ test = (Let [(None, b, App "nono" [])] (Let [(None, a, (Iff b (V b) (V a)))] (V 
 -- Todo: seperate lets and functions?
 -- The repeated usage of 'b' only corresponds to repeated usage of "nono" if it is inlined or called each time
 
-testAp :: IO (ADT Info)
+testAp :: IO (ADT (MAna Var Arity))
 testAp = applyR (substitute (M.singleton "a" (V "b")) ) emptyContext test
 
-substitute :: MonadCatch m => M.Map Var (ADT d) -> Rewrite Context m (ADT d)
+substitute :: (WithoutVars d, Algebra ADTF d, MonadCatch m)=> M.Map Var (ADT d) -> Rewrite Context m (ADT d)
 substitute m = alltdR $ transform $ \_ -> \case
     V v | Just o <- m M.!? v -> pure o
     o -> pure o
