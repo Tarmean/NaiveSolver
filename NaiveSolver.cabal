@@ -47,6 +47,7 @@ library
     , containers
     , generic-random
     , ghc-prim
+    , kure
     , lens
     , mtl
     , prettyprinter
@@ -71,6 +72,7 @@ executable NaiveSolver-exe
     , containers
     , generic-random
     , ghc-prim
+    , kure
     , lens
     , mtl
     , prettyprinter
@@ -96,6 +98,7 @@ test-suite NaiveSolver-test
     , containers
     , generic-random
     , ghc-prim
+    , kure
     , lens
     , mtl
     , prettyprinter

@@ -31,6 +31,7 @@ dependencies:
 - ghc-prim
 - vector
 - prettyprinter
+- kure
 
 library:
   source-dirs: src
