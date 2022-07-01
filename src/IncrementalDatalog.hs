@@ -2,9 +2,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DefaultSignatures #-}
 module IncrementalDatalog where
 import Language.KURE as K
 
@@ -24,10 +28,13 @@ import qualified Data.Map.Merge.Lazy as MM
 import Control.Applicative
 import qualified Data.IntMap as IM
 import qualified Data.Set as S
-import Control.Lens hiding (Context, transform)
+import Optics
 import Data.String
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Data.IORef as IOR
+import GHC.Generics (Generic)
+import Debug.Trace (trace)
+import Control.Arrow
 
 
 {-# NOINLINE uniq_hack #-}
@@ -42,17 +49,196 @@ genUniq = unsafePerformIO $ do
 data Info = Monotone | Incremental | None
     deriving (Show, Eq, Ord)
 data Var = Var { ident :: !Ident, uniq :: !Int }
+    deriving (Eq, Ord)
+instance Show Var where
+    show Var {..} = ident._0 <> "_" <> show uniq
+data ADT d = App Var [ADT d] | V Var | Prior (ADT d) | Diff (ADT d) | Integrate (ADT d) | Let [(d, Var, (ADT d))] (ADT d) | Abs Var (ADT d) | Iff Var (ADT d) (ADT d)
     deriving (Show, Eq, Ord)
-data ADT d = App Var [ADT d] | V Var | Prior (ADT d) | Diff (ADT d) | Integrate (ADT d) | Let [(d, Var, (ADT d))] (ADT d) | Abs Var (ADT d)
+
+class Analysis s where
+   inAlt :: s -> s -> s
+   inSeq :: s -> s -> s
+   inCall :: s -> s -> s
+   diffA :: s -> s -> s
+   default diffA :: (Eq s) => s -> s -> s
+   diffA l r
+     | l == r = topA
+     | otherwise = l
+   topA :: s
+   botA :: s
+data MAna k v = MAna { elems :: M.Map k v } | MBot
     deriving (Show, Eq, Ord)
-newtype Ident = Ident String
+instance (Eq s, Ord k, Analysis s) => Analysis (MAna k s) where
+   inAlt MBot a = a
+   inAlt a MBot = a
+   inAlt (MAna l) (MAna r) = MAna $ MM.merge (MM.mapMissing (const $ inAlt topA)) (MM.mapMissing (const $ flip inAlt topA)) (MM.zipWithMaybeMatched step) l r
+     where
+       step _ a b
+         | out == topA = Nothing
+         | otherwise = Just out
+         where out = inAlt a b
+   inSeq (MAna l) (MAna r)
+     =  MAna $ MM.merge MM.preserveMissing MM.preserveMissing (MM.zipWithMatched step) l r
+      where
+       step _ a b = out
+         where out = inSeq a b
+   inSeq _ _ = MBot
+   inCall _ _ = undefined
+   botA = MBot
+   topA = MAna mempty
+   diffA (MAna l) (MAna r) = MAna (MM.merge MM.preserveMissing MM.dropMissing (MM.zipWithMaybeMatched step) l r)
+     where
+       step _ a b
+         | a == b = Nothing
+         | otherwise = Just a
+   diffA l _ = l
+allJoinA :: (Ord k, Eq s, Analysis s) => s -> MAna k s -> MAna k s
+allJoinA _ MBot = MBot
+allJoinA s (MAna l) = MAna $  M.map step l
+ where
+   step b = inCall s b
+
+findFixpointBW :: forall k s. (Show k, Show s, Ord k, Eq s, Analysis s) => M.Map k (MAna k s) -> MAna k s -> MAna k s
+findFixpointBW step r0 
+  -- | trace ("findFixpointBW" <> show (step, r0)) False = undefined
+  | otherwise = go r0 r0
+  where
+    go :: (Ord k, Eq s, Analysis s) => MAna k s -> MAna k s -> MAna k s
+    go _ MBot = MBot
+    go seen frontier
+      | topA == frontier = seen
+      -- | trace (show ("go", seen, frontier, steppedFrontier, new)) False = undefined
+      | otherwise = go global  (diffA global seen)
+     where
+       global = inSeq seen new
+       new = foldr inSeq topA steppedFrontier
+       steppedFrontier = M.intersectionWith allJoinA frontier.elems step
+
+-- findFixpointFW :: forall k s. (Show k, Show s, Ord k, Eq s, Analysis s) => M.Map k (MAna k Arity) -> M.Map k s -> M.Map k s
+-- findFixpointFW step r0 
+--   -- | trace ("findFixpoint" <> show (step, r0)) False = undefined
+--   | otherwise = go r0 r0'
+--   where
+--     r0' = MAna $ M.union r0.elems (M.fromList [(k, botA) | k <- M.keys step])
+--     go :: (Ord k, Eq s, Analysis s) => MAna k s -> MAna k s -> MAna k s
+--     go _ MBot = MBot
+--     go seen frontier
+--       | topA == frontier = seen
+--       -- | trace (show ("go", seen, frontier, steppedFrontier, new)) False = undefined
+--       | otherwise = go global  (diffA global seen)
+--      where
+--        global = inSeq seen new
+--        new = foldr inSeq topA steppedFrontier
+--        steppedFrontier = M.intersectionWith allJoinA frontier.elems step
+
+
+findFixpointBW' :: (Show Var, Show s, Eq s, Analysis s) => [(d, Var, MAna Var s)] -> MAna Var s -> MAna Var s
+findFixpointBW' l r = findFixpointBW (M.fromList [(v,o) | (_,v,o) <- l]) r
+
+mkAna :: Var -> s -> MAna Var s
+mkAna v s = MAna $ M.singleton v s
+data instance Step (ADT d) r = AppF Var [r] | VF Var | PriorF r | DiffF r | IntegrateF r | LetF [(d, Var, r)] r | AbsF Var r | IffF Var r r
+    deriving (Show, Eq, Ord, Foldable, Functor)
+instance Algebra (ADT d) (MAna Var Arity) where
+  algebra (VF var) = mkAna var usedOnce
+  algebra (PriorF f) = f
+  algebra (AppF f ls) = foldr inSeq topA (mkAna f usedOnce : ls)
+  algebra (DiffF f) = f
+  algebra (IntegrateF f) = f
+  algebra (LetF l f) = findFixpointBW' l f
+  algebra (AbsF _ f) = f
+  algebra (IffF v l r) = inSeq (mkAna v usedOnce) (l `inAlt` r)
+
+--            Zero-Many
+--             /     \
+--      Zero-Once    Once-Many
+--          /     \ /     \
+--  Zero-Zero  Once-Once  Many-Many
+--          \      |      /
+--           --    |    --
+--              \  |   /
+--                ABot
+--
+data Arity1 = Zero | Once | Many
+    deriving (Show, Eq, Ord, Bounded, Enum)
+arPlus :: Arity1 -> Arity1 -> Arity1
+arPlus Zero a = a
+arPlus a Zero = a
+arPlus _ _ = Many
+arMult :: Arity1 -> Arity1 -> Arity1
+arMult Zero _ = Zero
+arMult _ Zero = Zero
+arMult Once a = a
+arMult a Once = a
+arMult _ _ = Many
+usedOnce :: Arity
+usedOnce = Arity Once Once
+data Arity = Arity { lb :: Arity1, ub :: Arity1 } | ABot
+    deriving (Show, Eq, Ord)
+mkArity :: Arity1 -> Arity1 -> Arity
+mkArity l r 
+  | l > r = ABot
+  | otherwise = Arity l r
+instance Analysis Arity where
+  inAlt l@Arity{} r@Arity{} = mkArity (min l.lb r.lb) (max l.ub r.ub)
+  inAlt ABot a = a
+  inAlt a ABot = a
+  inSeq l@Arity{} r@Arity{} = mkArity (l.lb `arPlus` r.lb) (l.ub `arPlus` r.ub)
+  inSeq _ _ = ABot
+  inCall l@Arity{} r@Arity{} = mkArity (l.lb `arMult` r.lb) (l.ub `arMult` r.ub)
+  inCall _ _ = ABot
+  topA = Arity Zero Zero
+  botA = ABot
+
+data Terminates = Terminates | MayDiverge | DoesNotTerminate
+    deriving (Show, Eq, Ord)
+instance Analysis Terminates where
+  inAlt a b 
+    | a == b = a
+  inAlt _ _ = MayDiverge
+  inSeq a b
+    | a == b = a
+  inSeq DoesNotTerminate _ = DoesNotTerminate
+  inSeq _ DoesNotTerminate = DoesNotTerminate
+  inSeq _ _ = MayDiverge
+
+  inCall _ b = b
+  topA = Terminates
+  botA = DoesNotTerminate
+
+data family Step d a
+class Functor (Step d) => InjStep d where
+    injStep :: d -> Step d d
+instance InjStep (ADT d) where
+    injStep (V v) = VF v
+    injStep (Prior f) = PriorF f
+    injStep (App f ls) = AppF f ls
+    injStep (Diff f) = DiffF f
+    injStep (Integrate f) = IntegrateF f
+    injStep (Let l f) = LetF l f
+    injStep (Abs v f) = AbsF v f
+    injStep (Iff v l r) = IffF v l r
+
+mutual :: (InjStep d) => (Step d (a,b) -> a) -> (Step d (a,b) -> b) -> d -> (a,b)
+mutual f g = (f &&& g) . fmap (mutual f g) . injStep
+
+cata :: (InjStep d, Algebra d a) => d -> a
+cata = algebra . fmap cata . injStep
+class Algebra d s where
+   algebra :: Step d s -> s
+newtype Used = Used { vars :: S.Set Var}
+    deriving (Show, Eq, Ord)
+    deriving (Semigroup, Monoid) via S.Set Var
+    deriving Generic
+
+newtype Ident = Ident { _0 :: String}
     deriving (Show, Eq, Ord)
 data Context = Ctx { in_scope :: M.Map Ident Int, shifted :: M.Map Ident Int }
     deriving (Show, Eq, Ord)
 emptyContext :: Context
 emptyContext = Ctx mempty mempty
 addVar :: Ident -> Context -> Context
-addVar v (Ctx s t) = Ctx (s & at v . non 0 +~ 1) t
+addVar v (Ctx s t) = Ctx (s & at v % non 0 %~ (+1)) t
 addVars :: [Ident] -> Context -> Context
 addVars vs c = foldr addVar c vs
 dropVars :: M.Map Ident Int -> Context -> Context
@@ -70,6 +256,7 @@ instance K.Walker Context (ADT d) where
     Integrate x -> Integrate <$> applyT f c x
     Let xs x -> Let <$> traverse (\(t,n,b) -> (t,n,) <$> applyT f c b) xs <*> applyT f c x
     Abs s x -> Abs s <$> applyT f c x
+    Iff s x y -> Iff s <$> applyT f c x <*> applyT f c y
 
 
 
@@ -82,10 +269,14 @@ instance IsString Var where
 
 
 test :: ADT Info
-test = (Let [(None, b, App "nono" [])] (Let [(None, a, (V a))] (V a))) 
+test = (Let [(None, b, App "nono" [])] (Let [(None, a, (Iff b (V b) (V a)))] (V a))) 
   where
     a = "a"
     b = "b"
+-- >>> cata test
+-- MAna {elems = fromList [(a_3,Arity {lb = Once, ub = Many}),(b_1,Arity {lb = Many, ub = Many}),(nono_2,Arity {lb = Many, ub = Many})]}
+-- Todo: seperate lets and functions?
+-- The repeated usage of 'b' only corresponds to repeated usage of "nono" if it is inlined or called each time
 
 testAp :: IO (ADT Info)
 testAp = applyR (substitute (M.singleton "a" (V "b")) ) emptyContext test
@@ -96,14 +287,6 @@ substitute m = alltdR $ transform $ \_ -> \case
     o -> pure o
 
 
-
-pushDiff :: Applicative m => ADT d -> m (ADT d)
-pushDiff (Diff (Prior x)) = (Prior <$> (pushDiff (Diff x)))
-pushDiff (Diff (App s adt)) = pure $ mkDiff s adt
-pushDiff (Diff (Integrate a)) = pure a
-pushDiff a = pure a
-
-mkDiff = undefined
 
 data Table k v = Table { old :: M.Map k v, new :: M.Map k v, def :: Maybe v }
   deriving (Show, Eq, Ord, Functor)

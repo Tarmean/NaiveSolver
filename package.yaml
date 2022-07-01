@@ -23,7 +23,6 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - mtl
-- lens
 - QuickCheck
 - generic-random
 - transformers
@@ -32,6 +31,7 @@ dependencies:
 - vector
 - prettyprinter
 - kure
+- optics
 
 library:
   source-dirs: src

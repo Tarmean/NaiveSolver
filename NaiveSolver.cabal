@@ -48,8 +48,8 @@ library
     , generic-random
     , ghc-prim
     , kure
-    , lens
     , mtl
+    , optics
     , prettyprinter
     , text
     , transformers
@@ -73,8 +73,8 @@ executable NaiveSolver-exe
     , generic-random
     , ghc-prim
     , kure
-    , lens
     , mtl
+    , optics
     , prettyprinter
     , text
     , transformers
@@ -99,8 +99,8 @@ test-suite NaiveSolver-test
     , generic-random
     , ghc-prim
     , kure
-    , lens
     , mtl
+    , optics
     , prettyprinter
     , text
     , transformers
