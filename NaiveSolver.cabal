@@ -26,10 +26,19 @@ source-repository head
 library
   exposed-modules:
       Arith
+      EGraph.Matching
+      EGraph.MatchTypes
+      EGraph.Pending
+      EGraph.PlanAssembly
+      EGraph.PlanSequence
+      EGraph.PlanStep
+      EGraph.Pure
+      EGraph.Types
       FiniteDomains
       IncrementalDatalog
       Lib
       MinMax
+      Monad.Amb
       Propagator
       Range
       Test
@@ -40,13 +49,14 @@ library
       src
   default-extensions:
       GHC2021
-  ghc-options: -Wall
+  ghc-options: -Wall -Wunused-dependencies
   build-depends:
       QuickCheck
     , base >=4.7 && <5
     , containers
     , generic-random
     , ghc-prim
+    , hashable
     , kure
     , mtl
     , optics
@@ -64,7 +74,7 @@ executable NaiveSolver-exe
       app
   default-extensions:
       GHC2021
-  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N -Wall
+  ghc-options: -Wall -Wunused-dependencies -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:
       NaiveSolver
     , QuickCheck
@@ -72,6 +82,7 @@ executable NaiveSolver-exe
     , containers
     , generic-random
     , ghc-prim
+    , hashable
     , kure
     , mtl
     , optics
@@ -90,7 +101,7 @@ test-suite NaiveSolver-test
       test
   default-extensions:
       GHC2021
-  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wunused-dependencies -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       NaiveSolver
     , QuickCheck
@@ -98,6 +109,7 @@ test-suite NaiveSolver-test
     , containers
     , generic-random
     , ghc-prim
+    , hashable
     , kure
     , mtl
     , optics

@@ -32,11 +32,12 @@ dependencies:
 - prettyprinter
 - kure
 - optics
+- hashable
 
 library:
   source-dirs: src
 ghc-options:
-    - -Wall
+    - -Wall -Wunused-dependencies
 default-extensions: GHC2021
 
 executables:
