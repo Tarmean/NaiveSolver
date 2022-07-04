@@ -18,8 +18,7 @@ the time
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE LambdaCase #-}
 module EGraph.PlanStep (collectSteps, MatchEnv(..), DiscoverKind(..), Stats(..)) where
-import EGraph.MatchTypes
-    ( PGraph(definitions), PElem, ExprNodeId, ArgPos )
+import EGraph.PlanTypes
 
 import Control.Monad.State
     ( forM_, gets, MonadState(state), StateT(runStateT) )
@@ -74,19 +73,7 @@ collectSteps env = runStateT (runWriterT step) env
          processElem c
          pure c
 
-data MatchEnv = MEnv {
-    possiblyInconsistent :: S.Set ExprNodeId,
-    knownClass :: M.Map ExprNodeId DiscoverKind,
-    nonGroundNodes :: Pending ExprNodeId,
-    patGraph :: PGraph
-} deriving (Eq, Ord, Show, Generic)
 
--- | We know the class of a node, but *how* did we find out?
-data DiscoverKind = ArgOf { parent :: ExprNodeId, pos :: ArgPos } | CongruenceLookup { unblockedBy :: ExprNodeId }
-  deriving (Eq, Ord, Show, Generic)
-
-data Stats = Stats { preKnown :: S.Set ArgPos, allowsDiscovers :: S.Set ExprNodeId, allowsChecks :: [DiscoverKind], learned :: Int }
-  deriving (Eq, Ord, Show, Generic)
 instance Semigroup Stats where
     Stats a b c d <> Stats a' b' c' d' = Stats (a <> a') (b <> b') (c <> c')  (d + d')
 instance Monoid Stats where

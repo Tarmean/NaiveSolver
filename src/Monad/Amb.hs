@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-| Basic non-determinism monad plus ability to register unwinding handlers. Useful for undoing changes to mutable state:
 
    x <- 1 <|> 2
@@ -12,21 +14,45 @@ This works even if #count targets mutable memory. Operationally, both alternativ
 - But we must be careful not to leak memory in unwinding handlers by laziness :/
  -}
 module Monad.Amb where
-import Control.Monad.State ( ap )
+import Control.Monad.State ( ap, MonadTrans (lift), MonadState (..) )
 import Control.Applicative ( Alternative((<|>), empty) )
+import Control.Monad.Primitive
+import Control.Monad.Cont.Class
+import Control.Monad
 
-data Amb r m a = Amb { runAmb :: (a -> m r -> m r) -> m r -> m r }
+data AmbT r m a = Amb { runAmb :: (a -> m r -> m r) -> m r -> m r }
   deriving Functor
-instance Monad (Amb r m) where
+
+instance Monad (AmbT r m) where
   Amb m >>= f = Amb $ \onSucc onFail -> m (\a onFail' -> runAmb (f a) onSucc onFail') onFail
-instance Applicative (Amb r m) where
+instance Applicative (AmbT r m) where
   pure a = Amb $ \k e -> k a e
   (<*>) = ap
-instance (Alternative m) => Alternative (Amb r m) where
-  empty = Amb $ \_ _ -> empty
+instance Alternative (AmbT r m) where
+  empty = Amb $ \_ onFail -> onFail
   Amb m <|> Amb n = Amb $ \onSucc onFail -> m onSucc (n onSucc onFail)
+instance MonadPlus (AmbT r m) where
+    mzero = empty
+    mplus = (<|>)
+instance MonadState s m => MonadState s (AmbT r m) where
+  get = lift get
+  put = lift . put
 
 -- | Before backtracking, run the given action.
 -- Used to undo mutation
-onFailure :: (Alternative m) => m () -> Amb r m ()
+onFailure :: (Applicative m) => m () -> AmbT r m ()
 onFailure m = Amb $ \onSucc onFail -> onSucc () (m *> onFail)
+instance MonadTrans (AmbT r) where
+  lift m = Amb $ \onSucc onFail -> m >>= \x -> onSucc x onFail
+instance PrimMonad m => PrimMonad (AmbT r m) where
+  type PrimState (AmbT r m) = PrimState m
+  primitive = lift . primitive
+instance (Alternative  m, Monad m) => MonadCont (AmbT r m) where
+  callCC cont = Amb $ \onSucc onFail -> runAmb (cont $ \a -> Amb $ \_onSucc' _onFail' -> onSucc a empty) onSucc onFail
+
+withFuture_ :: ((a -> AmbT r m ()) -> AmbT r m a) -> AmbT r m a
+withFuture_ f = Amb $ \onSucc onFail -> runAmb (f $ \a -> Amb $ \next failed -> onSucc a (next () failed)) (\a _ -> onSucc a onFail) onFail
+
+withFuture :: ((a -> m r) -> m r) -> AmbT r m a
+withFuture f = Amb $ \onSucc onFail -> f $ \a -> onSucc a onFail
+-- withFuture' :: Applicative m => ((a -> AmbT m ()) -> AmbT m ()) -> AmbT m a

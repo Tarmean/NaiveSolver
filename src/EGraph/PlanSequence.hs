@@ -4,26 +4,25 @@
     This is quite a bit like the QuickSI subgraph isomorphism algorithm!
     The output requires some assembly, which is done in EGraph.PlanAssembly
  -}
-module EGraph.PlanSequence (greedyMatching) where
+module EGraph.PlanSequence (PlanStep(..), greedyMatching) where
 import EGraph.PlanStep
-    ( Stats(preKnown, allowsDiscovers, allowsChecks),
-      MatchEnv(MEnv, patGraph),
-      collectSteps )
-import EGraph.MatchTypes
-    ( PGraph(definitions), PElem, ExprNodeId, ArgPos )
 import qualified Data.Set as S
 import EGraph.Types ( Elem'(argIds) )
 import qualified Data.Map as M
 import Data.List (maximumBy)
 import Data.Ord (comparing)
 import EGraph.Pending (mkPending)
+import EGraph.PlanTypes
 
-greedyMatching :: PGraph -> (M.Map ExprNodeId Stats, MatchEnv)
+greedyMatching :: PGraph -> ([PlanStep], MatchEnv)
 greedyMatching pgraph = go mempty (makeMatchEnv pgraph)
   where
     go acc env = case collectSteps env of
       [] -> (acc, env)
-      candidates -> let ((pid, stats), env') = maximumBy (comparing rate1) candidates in go (M.insert pid stats acc) env'
+      candidates -> let ((pid, stats), env') = maximumBy (comparing rate1) candidates in go (PlanStep stats pid (elemOf pid) : acc) env'
+    elemOf pid 
+      | Right out <- pgraph.definitions M.! pid = out
+      | otherwise = undefined
     rate1 ((pid, stats), env) = rateStats pelem stats
       where 
         pelem = case env.patGraph.definitions M.! pid of

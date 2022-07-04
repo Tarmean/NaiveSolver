@@ -26,14 +26,19 @@ source-repository head
 library
   exposed-modules:
       Arith
+      EGraph.ByteCodeVM
+      EGraph.Class
+      EGraph.Match
       EGraph.Matching
-      EGraph.MatchTypes
       EGraph.Pending
       EGraph.PlanAssembly
       EGraph.PlanSequence
       EGraph.PlanStep
+      EGraph.PlanTypes
       EGraph.Pure
+      EGraph.Storage
       EGraph.Types
+      EGraph.UnionFind
       FiniteDomains
       IncrementalDatalog
       Lib
@@ -53,6 +58,7 @@ library
   build-depends:
       QuickCheck
     , base >=4.7 && <5
+    , bytestring
     , containers
     , generic-random
     , ghc-prim
@@ -61,8 +67,10 @@ library
     , mtl
     , optics
     , prettyprinter
+    , primitive
     , text
     , transformers
+    , unordered-containers
     , vector
   default-language: Haskell2010
 
@@ -79,6 +87,7 @@ executable NaiveSolver-exe
       NaiveSolver
     , QuickCheck
     , base >=4.7 && <5
+    , bytestring
     , containers
     , generic-random
     , ghc-prim
@@ -87,8 +96,10 @@ executable NaiveSolver-exe
     , mtl
     , optics
     , prettyprinter
+    , primitive
     , text
     , transformers
+    , unordered-containers
     , vector
   default-language: Haskell2010
 
@@ -106,6 +117,7 @@ test-suite NaiveSolver-test
       NaiveSolver
     , QuickCheck
     , base >=4.7 && <5
+    , bytestring
     , containers
     , generic-random
     , ghc-prim
@@ -114,7 +126,9 @@ test-suite NaiveSolver-test
     , mtl
     , optics
     , prettyprinter
+    , primitive
     , text
     , transformers
+    , unordered-containers
     , vector
   default-language: Haskell2010

@@ -8,7 +8,6 @@
 module EGraph.Pure where
 import qualified Data.Map as M
 import Optics
-import Optics.Operators
 import Optics.State.Operators
 import Optics.Operators.Unsafe ((^?!))
 import Control.Monad.State
@@ -17,8 +16,12 @@ import GHC.Generics (Generic)
 import qualified Data.Set as S
 import Data.Foldable (asum)
 import Data.List (group, sort)
+import qualified Data.Vector.Unboxed as VU
 
 -- Naive and inefficient egraph implementaion
+
+matchesOf :: Id -> Symbol -> VU.Vector Id -> (VU.Vector Id -> M ()) -> M ()
+matchesOf = undefined
 
 data UF = UF (M.Map Id Id) Int
   deriving (Eq, Ord, Show, Generic)
@@ -38,6 +41,7 @@ merge r l m = UF (M.insert l' r m') x
     (UF m' x, l') = find m l
 
 
+-- FIXME: split class into directory of symbols
 -- TODO: update parentIds? after update?
 data Class = Class { classId :: Id, elems :: [Elem], parents :: S.Set (Id, Elem) }
   deriving (Eq, Ord, Show, Generic)
@@ -50,11 +54,12 @@ data Class = Class { classId :: Id, elems :: [Elem], parents :: S.Set (Id, Elem)
 --
 --Elements have the form `mySymbolName($class1,$class2,$class3)`, i.e. a symbol head and n classes as arguments
 -- Problem with the merging:
-data EGraph = EGraph { classes :: M.Map Id Class, lookup :: M.Map Elem Id, equivIds :: UF, index :: M.Map Symbol [Id] }
-  deriving (Eq, Ord, Show, Generic)
-
-egraphLookup :: Elem -> EGraph  -> Maybe Id
-egraphLookup = undefined
+data EGraph = EGraph {
+    classes :: M.Map Id Class,
+    lookup :: M.Map Elem Id,
+    equivIds :: UF,
+    index :: M.Map Symbol [Id]
+} deriving (Eq, Ord, Show, Generic)
 
 emptyPending :: Pending
 emptyPending = Pending [] []
@@ -81,6 +86,8 @@ insertRExp :: RExp -> M Id
 insertRExp (RExp (Elem s exp)) = do
   exp' <- traverse insertRExp exp
   elemClass (Elem s exp')
+
+
 naiveSearch :: Pat -> M [(Id, M.Map Var Id)]
 naiveSearch (Pat e@(Elem s0 _)) = do
     idx <- use (egg % #classes)
