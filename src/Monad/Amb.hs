@@ -37,6 +37,8 @@ instance MonadPlus (AmbT r m) where
 instance MonadState s m => MonadState s (AmbT r m) where
   get = lift get
   put = lift . put
+-- instance MonadEgg m => MonadEgg (AmbT r m) where
+--   egg = lift egg
 
 -- | Before backtracking, run the given action.
 -- Used to undo mutation

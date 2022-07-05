@@ -9,7 +9,6 @@ module Data.Growable where
 import Control.Lens
 import qualified Data.Vector.Generic.Mutable as V
 import qualified Data.Vector.Generic as VN
-import Utils.MutLens
 import qualified Data.List as List
 import qualified Data.Vector as IB
 import Control.Monad.Primitive ( PrimMonad(PrimState) )
@@ -23,22 +22,31 @@ import qualified Data.Vector.Mutable as IB
 import qualified GHC.ForeignPtr as FP
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Foreign as F
+
+import Data.Mutable.Lens
+import Data.Mutable.Indexing
+import Data.Mutable.Each
+import Control.Monad.State
+import Data.Mutable.Slice
+import Data.Mutable.QuickSort (quickSort)
+
 type instance Index (Grow v s a) = Int
 type instance IxValue (Grow v s a) = a
+
 instance (Index (v n a) ~ Int, ValidateIdx (v n a)) => ValidateIdx (Grow v n a) where
   validateIdx i = validateIdx i . unGrow
 instance (ValidateIdx (v n a), V.MVector v a, IxM m (v n a), Index (v n a) ~ Int, IxValue (v n a) ~ a, PrimMonad m, n ~ PrimState m) => IxM m (Grow v n a) where
     ixM i f (Grow m) = fmap coerce (ixM i f m)
 
-newtype Grow v s a = Grow { unGrow :: v s a}
+newtype Grow v s (a :: Type) = Grow { unGrow :: v s a}
 
 
-type family Foo (a :: Type) :: Type where
-  Foo (Grow v s a) = v s a
-  Foo (a -> b) = Foo a -> Foo b
-  Foo c = c
+type family CoerceGrowable (a :: Type) :: Type where
+  CoerceGrowable (Grow v s a) = v s a
+  CoerceGrowable (a -> b) = CoerceGrowable a -> CoerceGrowable b
+  CoerceGrowable c = c
 
-coerceF :: Coercible a (Foo a) => Foo a -> a
+coerceF :: Coercible a (CoerceGrowable a) => CoerceGrowable a -> a
 coerceF = coerce
 
 class Capacity v where
@@ -95,22 +103,25 @@ fromList :: (PrimMonad f, VN.Vector v a) => [a] -> f (Grow (VN.Mutable v) (PrimS
 fromList ls = fmap Grow $ VN.thaw $ VN.fromList ls
 instance (PrimMonad m, s~PrimState m) => EachM m (Grow IB.MVector s a) where
   eachM f (Grow t) = eachM f t
-dedup :: (Eq a, Num (Index (Grow t a v)), V.MVector t a, v ~ PrimState f, PrimMonad f, IxM f (Grow t v a)) => Grow t v a -> f (Grow t v a)
-dedup t
-  | V.length (unGrow t) <= 1 = pure t
-  | otherwise = do
-    s0 <- viewM (ixM 0) t
-    go 0 s0 1 (V.length t)
+
+type MonadGrow r m a = (ValidateIdx (r (PrimState m) a), IxM m (r (PrimState m) a), Index (r (PrimState m) a) ~ Int, IxValue (r (PrimState m) a) ~ a, MonadState (Grow r (PrimState m) a) m, PrimMonad m, V.MVector r a)
+dedup :: (Eq a, MonadGrow r m a) => m ()
+dedup = do
+    l <- gets (V.length . unGrow)
+    when (l >= 1) $ do
+        s0 <- useP (ixM 0)
+        go 0 s0 1 l
   where
+    go :: (Eq a, MonadGrow r m a) => Int -> a -> Int -> Int -> m ()
     go frontier frontierVal candidate cap
-      | candidate == cap = pure (capGrowable frontier t)
+      | candidate == cap = id %- capGrowable frontier
       | otherwise = do
-        candidateVal <- viewM (ixM candidate) t
+        candidateVal <- useP (ixM candidate)
         if frontierVal == candidateVal
-        then do
-          go frontier frontierVal (candidate+1) cap
+        then go frontier frontierVal (candidate+1) cap
         else do
-          swapM (frontier+1) candidate t
+          let frontier' = frontier+1
+          mut (ixM frontier') .- candidateVal
           go (frontier+1) candidateVal (candidate+1) cap
 
 capGrowable :: V.MVector v a => Int -> Grow v s a -> Grow v s a
@@ -156,14 +167,14 @@ instance V.MVector v a => V.MVector (Grow v) a where
 testDedup :: [Int] -> Bool
 testDedup ls = unsafePerformIO $ do
     v <- fromList ls
-    v <- dedup v
+    v <- execStateT dedup v
     o <- freeze v
     pure $ fmap head (List.group ls) == IB.toList o
 
 testQuickSort :: [Int] -> Bool
 testQuickSort ls0 = unsafePerformIO $ do
-    v <- IB.thaw $IB.fromList ls0
-    quickSort v
+    v <- IB.thaw $ IB.fromList ls0
+    v <- execStateT quickSort v
     o <- IB.freeze v
     pure $ IB.toList o == List.sort ls0
 

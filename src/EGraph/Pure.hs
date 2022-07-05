@@ -7,9 +7,8 @@
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 module EGraph.Pure where
 import qualified Data.Map as M
-import Optics
-import Optics.State.Operators
-import Optics.Operators.Unsafe ((^?!))
+import Data.Generics.Labels ()
+import Control.Lens
 import Control.Monad.State
 import EGraph.Types
 import GHC.Generics (Generic)
@@ -17,6 +16,7 @@ import qualified Data.Set as S
 import Data.Foldable (asum)
 import Data.List (group, sort)
 import qualified Data.Vector.Unboxed as VU
+import Optics.Utils
 
 -- Naive and inefficient egraph implementaion
 
@@ -90,8 +90,8 @@ insertRExp (RExp (Elem s exp)) = do
 
 naiveSearch :: Pat -> M [(Id, M.Map Var Id)]
 naiveSearch (Pat e@(Elem s0 _)) = do
-    idx <- use (egg % #classes)
-    ls0 <- use (egg % #index % at s0 % non mempty)
+    idx <- use (egg . #classes)
+    ls0 <- use (egg . #index . at s0 . non mempty)
     let
         resolveCls a = idx M.! a
         go (Elem s args) x m = do
@@ -116,16 +116,16 @@ data MatchTrace = MT Symbol [TraceEntry]
 elemClass :: Elem -> M Id
 elemClass e = do
     e <- normalize e
-    use (egg % #lookup % at e) >>= \case
+    use (egg . #lookup . at e) >>= \case
       Just o -> pure o
       Nothing -> do
         classId <- mkId
         let cls = Class classId [e] mempty
         forM_ (argIds e) $ \p -> do
-          egg % #classes % ix p % #parents %= S.insert (classId, e)
-        egg % #classes % at classId ?= cls
-        egg % #lookup % at e ?= classId
-        egg % #index % at (fSymbol e) % non mempty %= (classId:)
+          egg . #classes . ix p . #parents %= S.insert (classId, e)
+        egg . #classes . at classId ?= cls
+        egg . #lookup . at e ?= classId
+        egg . #index . at (fSymbol e) . non mempty %= (classId:)
         pure classId
 
 type M a = State (EGraph, Pending)  a
@@ -135,24 +135,24 @@ egg = _1
 
 mkId :: M Id
 mkId = do
-  uf <- use (egg % #equivIds)
+  uf <- use (egg . #equivIds)
   let (uf', i) = genId uf
-  egg % #equivIds .= uf'
+  egg . #equivIds .= uf'
   pure i
 mergeId :: Id -> Id -> M ()
 mergeId l r = do
-  uf <- use (egg % #equivIds)
+  uf <- use (egg . #equivIds)
   let uf' = merge l r uf
-  egg % #equivIds .= uf'
+  egg . #equivIds .= uf'
 resolveId :: Id -> M Id
 resolveId l = do
-  uf <- use (egg % #equivIds)
+  uf <- use (egg . #equivIds)
   let (uf', i) = find uf l
-  egg % #equivIds .= uf'
+  egg . #equivIds .= uf'
   pure i
 
 -- classIx :: Id -> Lens' EGraph Class
--- classIx i = #classes % singular (ix i)
+-- classIx i = #classes . singular (ix i)
 
 processMerges :: [(Id, Id)] -> M ()
 processMerges ls =do
@@ -174,12 +174,6 @@ reinsertNode cls oldElem = do
     newCls <- elemClass elem
     merge1 newCls cls
 
-overM :: (Is k A_Traversal, MonadState s m) => Optic' k i s a -> (a -> m a) -> m ()
-overM l f = do
-  s <- get
-  s' <- traverseOf l f s
-  put s'
-
 uniqSorted :: Ord a => [a] -> [a]
 uniqSorted = fmap head . group
 
@@ -190,16 +184,16 @@ normalize e@Elem { argIds } = do
 
 normalizeClassElems :: M ()
 normalizeClassElems =
-  overM (egg % #classes % each % #elems) $ \elems ->  do
+  overM (egg . #classes . traversed . #elems) $ \elems ->  do
     elems' <- traverse normalize elems
     pure $ uniqSorted $ sort elems'
 
 recalculateIndex :: M ()
 recalculateIndex = do
-  egg % #index .= mempty
-  classes <- use (egg % #classes)
-  iforOf_ (itraversed % #elems % to (fmap fSymbol) % to uniqSorted <% each) classes $ \cls h -> do
-       egg % #index % at h % non mempty %= (cls:)
+  egg . #index .= mempty
+  classes <- use (egg . #classes)
+  iforOf_ (itraversed <. (#elems . to (fmap fSymbol) . to uniqSorted . each)) classes $ \cls h -> do
+       egg . #index . at h . non mempty %= (cls:)
 
 merge1 :: Id -> Id -> M (S.Set (Id, Elem))
 merge1 l r = do
@@ -208,10 +202,10 @@ merge1 l r = do
   if l == r
   then pure mempty
   else do
-    cl <- gets (^?! egg % #classes % ix l)
-    cr <- gets (^?! egg % #classes % ix r)
-    egg % #classes % at r .= Nothing
-    egg % #classes % at l ?= Class l (elems cl <> elems cr) (parents cl <> parents cr)
+    cl <- gets (^?! egg . #classes . ix l)
+    cr <- gets (^?! egg . #classes . ix r)
+    egg . #classes . at r .= Nothing
+    egg . #classes . at l ?= Class l (elems cl <> elems cr) (parents cl <> parents cr)
     mergeId l r
     let newPending = parents cr
     pure newPending

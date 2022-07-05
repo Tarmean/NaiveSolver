@@ -4,9 +4,8 @@
 {-# LANGUAGE BlockArguments #-}
 module EGraph.ByteCodeVM where
 
-import Optics.State (use)
-import Optics
-import Optics.State.Operators ((%=), (<%=), (.=))
+import Data.Generics.Labels ()
+import Control.Lens
 
 import Data.Maybe (fromJust)
 import qualified Data.Vector.Unboxed.Mutable as VU

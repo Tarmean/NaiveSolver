@@ -26,6 +26,13 @@ source-repository head
 library
   exposed-modules:
       Arith
+      Data.Growable
+      Data.Mutable.Each
+      Data.Mutable.Indexing
+      Data.Mutable.Lens
+      Data.Mutable.QuickSort
+      Data.Mutable.Slice
+      Data.MutLens
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
@@ -61,18 +68,20 @@ library
     , base >=4.7 && <5
     , bytestring
     , containers
+    , generic-lens
     , generic-random
     , ghc-prim
     , hashable
     , kure
+    , lens
     , mtl
-    , optics
     , prettyprinter
     , primitive
     , text
     , transformers
     , unordered-containers
     , vector
+    , vector-hashtables
   default-language: Haskell2010
 
 executable NaiveSolver-exe
@@ -90,18 +99,20 @@ executable NaiveSolver-exe
     , base >=4.7 && <5
     , bytestring
     , containers
+    , generic-lens
     , generic-random
     , ghc-prim
     , hashable
     , kure
+    , lens
     , mtl
-    , optics
     , prettyprinter
     , primitive
     , text
     , transformers
     , unordered-containers
     , vector
+    , vector-hashtables
   default-language: Haskell2010
 
 test-suite NaiveSolver-test
@@ -120,16 +131,18 @@ test-suite NaiveSolver-test
     , base >=4.7 && <5
     , bytestring
     , containers
+    , generic-lens
     , generic-random
     , ghc-prim
     , hashable
     , kure
+    , lens
     , mtl
-    , optics
     , prettyprinter
     , primitive
     , text
     , transformers
     , unordered-containers
     , vector
+    , vector-hashtables
   default-language: Haskell2010

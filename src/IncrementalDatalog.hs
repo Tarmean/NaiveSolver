@@ -30,7 +30,6 @@ import qualified Data.Map.Merge.Lazy as MM
 import Control.Applicative
 import qualified Data.IntMap as IM
 import qualified Data.Set as S
-import Optics
 import Data.String
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified Data.IORef as IOR
@@ -39,6 +38,8 @@ import Debug.Trace (trace, traceM)
 import Control.Arrow
 import Data.Kind (Type)
 import Control.Monad.State.Strict
+import Data.Generics.Labels ()
+import Control.Lens hiding (transform, Context)
 
 
 
@@ -320,7 +321,7 @@ data Context = Ctx { in_scope :: M.Map Ident Int, shifted :: M.Map Ident Int }
 emptyContext :: Context
 emptyContext = Ctx mempty mempty
 addVar :: Ident -> Context -> Context
-addVar v (Ctx s t) = Ctx (s & at v % non 0 %~ (+1)) t
+addVar v (Ctx s t) = Ctx (s & at v . non 0 %~ (+1)) t
 addVars :: [Ident] -> Context -> Context
 addVars vs c = foldr addVar c vs
 dropVars :: M.Map Ident Int -> Context -> Context

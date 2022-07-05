@@ -31,11 +31,13 @@ dependencies:
 - vector
 - prettyprinter
 - kure
-- optics
+- lens
 - hashable
 - bytestring
 - primitive
 - unordered-containers
+- vector-hashtables
+- generic-lens
 
 library:
   source-dirs: src

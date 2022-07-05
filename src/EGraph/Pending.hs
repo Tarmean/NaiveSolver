@@ -1,12 +1,12 @@
 {-| Incremental topo sort -}
 {-# LANGUAGE OverloadedLabels #-}
 module EGraph.Pending where
+import Control.Lens
+import Data.Generics.Labels ()
 import qualified Data.Set as S
 import qualified Data.Map as M
 import GHC.Generics (Generic)
 import Control.Monad.State
-import Optics
-import Optics.State.Operators ((.=), (?=))
 import Data.Maybe (catMaybes)
 data Pending a = Pending {
    -- | How many children are unknown - when this becomes 0, propagate.
@@ -35,20 +35,20 @@ markKnown learned s = execState (go learned) (mempty, s)
     go :: Ord a => [a] -> State (S.Set a, Pending a) ()
     go [] = pure ()
     go (x:xs) = do
-      alreadyMarked <- gets (has $ _1 % at x)
+      alreadyMarked <- gets (has $ _1 . at x)
       if alreadyMarked
       then go xs
       else do
-        modify $ _1 % at x .~ Just ()
-        occurences <- use (_2 % #occursIn % at x % non mempty)
+        modify $ _1 . at x .~ Just ()
+        occurences <- use (_2 . #occursIn . at x . non mempty)
         left <- forM (S.toList occurences) $ \occ -> do
-            i <- use (_2 % #unknownChildren % at occ)
+            i <- use (_2 . #unknownChildren . at occ)
             case i of
               Nothing -> pure Nothing
               Just 1 -> do
-                _2 % #unknownChildren % at occ .= Nothing
+                _2 . #unknownChildren . at occ .= Nothing
                 pure $ Just occ
               Just n -> do
-                _2 % #unknownChildren % at occ ?= (n-1)
+                _2 . #unknownChildren . at occ ?= (n-1)
                 pure Nothing
         go (catMaybes left <> xs)

@@ -15,10 +15,11 @@ import qualified Data.Map as M
 import EGraph.Types
 import Control.Monad.Trans.Writer
 import qualified Data.Sequence as Seq
-import Optics
-import Optics.State.Operators ((%=), (<%=))
 import EGraph.PlanTypes
 
+import Data.Generics.Labels ()
+import Control.Lens
+import Optics.Utils
 assemble :: MatchEnv -> [PlanStep] -> Program
 assemble env ps = Program out st.varUniq st.nodeUniq
   where
@@ -44,7 +45,7 @@ type M = WriterT (Seq.Seq VM) (State AssemblyState)
 
 newReg :: ExprNodeId -> M Reg
 newReg eid = do
-    out <- use (#pgraph % #definitions % at eid) >>= \case
+    out <- use (#pgraph . #definitions . at eid) >>= \case
        Nothing -> error "Invalid pgraph"
        Just (Left _) -> fmap Output (#varUniq <%= succ)
        Just (Right _) -> fmap Temporary (#nodeUniq <%= succ)
@@ -53,7 +54,7 @@ newReg eid = do
 
 regFor :: ExprNodeId -> M Reg
 regFor pid = do
-    use (#regMap % at pid) >>= \case
+    use (#regMap . at pid) >>= \case
         Just reg -> return reg
         Nothing -> do
             reg <- newReg pid
@@ -65,14 +66,10 @@ loadWith :: ExprNodeId -> VM -> M ()
 loadWith nid vm = do
    tell1 vm
    #isLoaded %= S.insert nid
-overM_ :: (MonadState s m, Is k A_Fold) => Optic' k is s a -> (a -> m r) -> m ()
-overM_ l f = do
-    s <- get
-    traverseOf_ l f s
 doAssembly :: PlanStep -> M ()
 doAssembly pstep = do
    -- store all values we haven't seen before into output
-   overM_ (#firstOccs % at pstep.node % non mempty % each) $ \(argPos, node) -> do
+   overM_ (#firstOccs . at pstep.node . non mempty . each) $ \(argPos, node) -> do
      reg <- regFor node
      loadWith node (CopyValue argPos reg)
    -- do all filtering that didn't happen via joins
@@ -89,7 +86,7 @@ doAssembly pstep = do
          argRegs <- traverse regFor expr.argIds
          tell1 (HashLookup expr.fSymbol argRegs (CheckEqual reg))
    -- new ground subexpression whose class we don't know yet
-   overM_ (#becomeGround % at pstep.node % non mempty % folded) $ \nid -> do
+   overM_ (#becomeGround . at pstep.node . non mempty . folded) $ \nid -> do
      node <- exprFor nid
      loadCongruence nid node
 
@@ -100,7 +97,7 @@ ensureChildrenCongruenceLoaded :: PElem -> M ()
 ensureChildrenCongruenceLoaded node = forChildrenOf node loadCongruence
 loadCongruence :: ExprNodeId -> PElem -> M ()
 loadCongruence pid node = do
-    isLoaded <- gets (has $ #isLoaded % ix pid)
+    isLoaded <- gets (has $ #isLoaded . ix pid)
     when (not isLoaded) $ do
         ensureChildrenCongruenceLoaded node
         outReg <- regFor pid
@@ -109,14 +106,14 @@ loadCongruence pid node = do
 forChildrenOf :: PElem -> (ExprNodeId -> PElem -> M ()) -> M ()
 forChildrenOf node f = do
         forM_ node.argIds $ \child -> do
-            overM_ (#pgraph % #definitions % at child) \case
+            overM_ (#pgraph . #definitions . at child) \case
               Just (Right expr) -> f child expr
               _ -> pure ()
 
 
 exprFor :: ExprNodeId -> M PElem
 exprFor pid = do
-    use (#pgraph % #definitions % at pid) >>= \case
+    use (#pgraph . #definitions . at pid) >>= \case
         Nothing -> error "Invalid pgraph"
         Just (Right e) -> return e
         Just (Left _) -> error "Trying to get an expression for a node that is not an expression"

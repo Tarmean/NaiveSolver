@@ -14,10 +14,10 @@ import qualified Data.IntMap.Strict as M
 import qualified Data.HashMap.Strict as HM
 import EGraph.UnionFind as UF
 import GHC.Generics (Generic)
+import Data.Generics.Labels ()
 import GHC.Base (build)
 import Control.Monad.State
-import Optics
-import Optics.State.Operators
+import Control.Lens
 import Data.Hashable
 import Optics.Utils
 import Control.Monad.Primitive
@@ -59,15 +59,15 @@ data EGraph = EGraph {
 instance Hashable (VU.Vector Int) where
     hashWithSalt salt v = hashWithSalt salt (VU.toList v)
 
-normalize :: (MonadState EGraph  m, Zoom m0 m UF EGraph) => Id -> m Id
+normalize :: (MonadState EGraph  m, Zoom m0 m UF EGraph, Functor (Zoomed m0 Id)) => Id -> m Id
 normalize i = zoom #union_find (state (flip UF.find i))
-normalizeRow  :: (MonadState EGraph  m, Zoom m0 m UF EGraph) => Row -> m Row
+normalizeRow  :: (MonadState EGraph  m, Functor (Zoomed m0 Id), Zoom m0 m UF EGraph) => Row -> m Row
 normalizeRow = traverseOf each normalize
 
-resolveE :: (MonadState  EGraph  m, Zoom m0 m UF EGraph) => Symbol -> Row -> m (Maybe Id)
+resolveE :: (MonadState  EGraph  m, Functor (Zoomed m0 Id), Zoom m0 m UF EGraph) => Symbol -> Row -> m (Maybe Id)
 resolveE s r = do
     r' <- traverseOf each normalize r
-    preuse (#hash_lookup % ix s % ix r')
+    preuse (#hash_lookup . ix s . ix r')
 
 -- | We have a prefix of the row, pretend it is filled with 0's
 -- How do we compare?
@@ -161,13 +161,13 @@ data RebuildState s = RS {
   } deriving (Generic)
 type M m = StateT (RebuildState (PrimState m)) m
 -- popInserts :: Monad m => Id -> M m (SymbolMap [Row])
--- popInserts id = #pending_insertions % at id % non mempty <.=  mempty
+-- popInserts id = #pending_insertions . at id . non mempty <.=  mempty
 
 -- TODO: keeping insertions seperate can be useful for incremental evaluation?
 -- applyInsertionsTo :: Monad m => Id ->  M m ()
 -- applyInsertionsTo c = do
 --     ins <- popInserts c
---     iforOf_ (each <% each) ins $ \symbol row ->
+--     iforOf_ (each <. each) ins $ \symbol row ->
 --       queueInsert c symbol row
 
 queueUnion :: Monad m => Id -> Id -> M m ()
@@ -177,18 +177,18 @@ queueInsert c symbol row=
   zoom #egraph (resolveE symbol row) >>= \case
     Just o -> queueUnion c o
     Nothing -> do
-      #egraph % #hash_lookup % at symbol % non mempty % at row ?= c
+      #egraph . #hash_lookup . at symbol . non mempty . at row ?= c
       mkInsert c symbol row
 
 getQueueVec :: PrimMonad m => Id -> Symbol -> M m (VM.MVector (PrimState m) Int)
 getQueueVec cid symbol = do
-    v <- preuse (#pending_inserts % ix cid % ix symbol)
+    v <- preuse (#pending_inserts . ix cid . ix symbol)
     case v of
       Just o -> pure o
       Nothing -> do
           v <- VM.new 5
-          orDefault (#pending_inserts % at cid) mempty 
-          (#pending_inserts % ix cid % at symbol) ?=  v
+          orDefault (#pending_inserts . at cid) mempty 
+          (#pending_inserts . ix cid . at symbol) ?=  v
           pure v
 
 mkInsert :: (PrimMonad m) => Id -> Symbol -> Row -> M m ()
@@ -199,11 +199,11 @@ mkInsert cid symbol row = do
 -- Go through all classes, queue inserts for any table affected by unification
 applyUnifications :: PrimMonad m => ClassSet -> M m ()
 applyUnifications dirty = do
-    ioverM_ (#egraph % #classes % each % #tables <%> each) $ \(cid, symbol) table -> do
+    ioverM_ (#egraph . #classes . itraversed <.> #tables . itraversed) $ \(cid, symbol) table -> do
         unless (table.references `IS.disjoint` dirty) $ do
             forM_ (tableRows table) $ \row -> do
                 row' <- zoom #egraph (normalizeRow row)
                 when (row' /= row) (queueInsert cid symbol row')
             -- UUUUGH fix this nonsense, this doesn't fuse
             refs' <- mapM (zoom #egraph . normalize) (IS.toList table.references)
-            #egraph % #classes % ix cid % #tables % ix symbol % #references .= IS.fromList refs'
+            #egraph . #classes . ix cid . #tables . ix symbol . #references .= IS.fromList refs'

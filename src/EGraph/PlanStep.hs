@@ -24,8 +24,8 @@ import Control.Monad.State
     ( forM_, gets, MonadState(state), StateT(runStateT) )
 import Control.Applicative ( asum )
 
-import Optics ( has, to, (%), non, use, At(at), Zoom(zoom) )
-import Optics.State.Operators ( (%=), (?=) )
+import Data.Generics.Labels ()
+import Control.Lens
 
 import qualified Data.Set as S
 import qualified Data.Map as M
@@ -98,13 +98,13 @@ tellPreKnown p = do
 
 getElem :: HasCallStack => ExprNodeId -> M PElem
 getElem i =
-    use (#patGraph % #definitions % at i % non (error "getElem: no such element") % to unwrap)
+    use (#patGraph . #definitions . at i . non (error "getElem: no such element") . to unwrap)
      where
        unwrap (Left _) = error "Expected inner node, found leaf"
        unwrap (Right o) = o
 markArgKnown :: ExprNodeId -> DiscoverKind -> M ()
 markArgKnown node potentialReason = do
-    known <- gets $ has (#knownClass % at node)
+    known <- gets $ has (#knownClass . at node)
     if known
     then tellCheck potentialReason
     else do
@@ -114,7 +114,7 @@ markArgKnown node potentialReason = do
 tellCheck :: DiscoverKind -> M ()
 tellCheck discover = tell mempty { allowsChecks = [discover] }
 tellReason :: ExprNodeId -> DiscoverKind -> M ()
-tellReason node reason = #knownClass % at node ?= reason
+tellReason node reason = #knownClass . at node ?= reason
 
 -- | Which nodes become ground after learning the classes of nodes in `written`?
 -- Being ground means no unknowns, so we can use the congruence closure hash-table to retrieve their class
