@@ -1,18 +1,33 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE LambdaCase #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 module EGraph.Storage where
 
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as VM
 import qualified Data.IntSet as IS
 import qualified Data.IntMap.Strict as M
 import qualified Data.HashMap.Strict as HM
-import EGraph.UnionFind
+import EGraph.UnionFind as UF
 import GHC.Generics (Generic)
 import GHC.Base (build)
+import Control.Monad.State
+import Optics
+import Optics.State.Operators
+import Data.Hashable
+import Optics.Utils
+import Control.Monad.Primitive
 
+
+-- TODO: track refcounts of classes, and do incremental reachability checks from some root set
+-- This way we can do cheap-ish garbage collection when replacing expressions via CHR
 type Id = Int
 type SymbolMap = M.IntMap
+type Symbol = Int
 type ClassMap = M.IntMap
 type ClassSet = IS.IntSet
 type Row = VU.Vector Int
@@ -40,6 +55,19 @@ data EGraph = EGraph {
     classes :: !(ClassMap AClass),
     union_find :: !UF
 } deriving (Eq, Ord, Show, Generic)
+
+instance Hashable (VU.Vector Int) where
+    hashWithSalt salt v = hashWithSalt salt (VU.toList v)
+
+normalize :: (MonadState EGraph  m, Zoom m0 m UF EGraph) => Id -> m Id
+normalize i = zoom #union_find (state (flip UF.find i))
+normalizeRow  :: (MonadState EGraph  m, Zoom m0 m UF EGraph) => Row -> m Row
+normalizeRow = traverseOf each normalize
+
+resolveE :: (MonadState  EGraph  m, Zoom m0 m UF EGraph) => Symbol -> Row -> m (Maybe Id)
+resolveE s r = do
+    r' <- traverseOf each normalize r
+    preuse (#hash_lookup % ix s % ix r')
 
 -- | We have a prefix of the row, pretend it is filled with 0's
 -- How do we compare?
@@ -109,7 +137,7 @@ lookupRange table prefix = build $ \cons nil ->
         Just r -> (l,r)
 
 
-data Modification = Mods { insertions :: ClassMap (SymbolMap Table), unifications :: VU.Vector (Id,Id)  }
+data Modification = Mods { insertions :: ClassMap (SymbolMap Table), unifications :: VU.Vector (Id,Id) }
 -- for insertions:
 -- - insert into hashmap
 -- - on collision, queue unification
@@ -118,6 +146,64 @@ data Modification = Mods { insertions :: ClassMap (SymbolMap Table), unification
 -- for unifications:
 -- - decide which class to remove
 -- - queue insertions into new class
--- - mark the referenced_by classes as dirty
-applyModifications :: EGraph -> Modification -> EGraph
-applyModifications eg mods = undefined
+-- - mark the referenced_by classes as dirtied by the rewritten class
+-- for normalization:
+-- - sort and dedup all dirty tables
+-- - rebuild hashtable
+--
+-- By using prefix tries/indices we wouldn't need sorting, and could defer normalization until we have too much garbage accumulated?
+data RebuildState s = RS {
+    dirtiedClasses :: ClassMap ClassSet,
+    pending_inserts :: ClassMap (SymbolMap (VU.MVector s Int)),
+    pending_unions :: [(Id, Id)],
+    rewritten :: ClassSet,
+    egraph :: EGraph
+  } deriving (Generic)
+type M m = StateT (RebuildState (PrimState m)) m
+-- popInserts :: Monad m => Id -> M m (SymbolMap [Row])
+-- popInserts id = #pending_insertions % at id % non mempty <.=  mempty
+
+-- TODO: keeping insertions seperate can be useful for incremental evaluation?
+-- applyInsertionsTo :: Monad m => Id ->  M m ()
+-- applyInsertionsTo c = do
+--     ins <- popInserts c
+--     iforOf_ (each <% each) ins $ \symbol row ->
+--       queueInsert c symbol row
+
+queueUnion :: Monad m => Id -> Id -> M m ()
+queueUnion a b = #pending_unions %= ((a,b):)
+queueInsert :: PrimMonad m => Id -> Symbol -> Row -> M m ()
+queueInsert c symbol row=
+  zoom #egraph (resolveE symbol row) >>= \case
+    Just o -> queueUnion c o
+    Nothing -> do
+      #egraph % #hash_lookup % at symbol % non mempty % at row ?= c
+      mkInsert c symbol row
+
+getQueueVec :: PrimMonad m => Id -> Symbol -> M m (VM.MVector (PrimState m) Int)
+getQueueVec cid symbol = do
+    v <- preuse (#pending_inserts % ix cid % ix symbol)
+    case v of
+      Just o -> pure o
+      Nothing -> do
+          v <- VM.new 5
+          orDefault (#pending_inserts % at cid) mempty 
+          (#pending_inserts % ix cid % at symbol) ?=  v
+          pure v
+
+mkInsert :: (PrimMonad m) => Id -> Symbol -> Row -> M m ()
+mkInsert cid symbol row = do
+   v <- getQueueVec cid symbol
+   VM.write v 0 0
+
+-- Go through all classes, queue inserts for any table affected by unification
+applyUnifications :: PrimMonad m => ClassSet -> M m ()
+applyUnifications dirty = do
+    ioverM_ (#egraph % #classes % each % #tables <%> each) $ \(cid, symbol) table -> do
+        unless (table.references `IS.disjoint` dirty) $ do
+            forM_ (tableRows table) $ \row -> do
+                row' <- zoom #egraph (normalizeRow row)
+                when (row' /= row) (queueInsert cid symbol row')
+            -- UUUUGH fix this nonsense, this doesn't fuse
+            refs' <- mapM (zoom #egraph . normalize) (IS.toList table.references)
+            #egraph % #classes % ix cid % #tables % ix symbol % #references .= IS.fromList refs'

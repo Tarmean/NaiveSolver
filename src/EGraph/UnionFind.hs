@@ -8,14 +8,14 @@ data UF = UF (M.IntMap Int) Int
 genId :: UF -> (UF, Int)
 genId (UF m i) = (UF m (i+1), i)
 
-find :: UF -> Int -> (UF, Int)
+find :: UF -> Int -> (Int, UF)
 find (UF m0 x) = go m0
   where
     go m i = case m M.!? i of
-      Nothing -> (UF m x, i)
+      Nothing -> (i, UF m x)
       Just o -> go (M.insert i o m) o
 merge :: Int -> Int -> UF -> UF
 merge r l m = UF (M.insert l' r m') x
   where
-    (UF m' x, l') = find m l
+    (l', UF m' x) = find m l
 

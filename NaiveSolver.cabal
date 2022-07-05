@@ -44,6 +44,7 @@ library
       Lib
       MinMax
       Monad.Amb
+      Optics.Utils
       Propagator
       Range
       Test
