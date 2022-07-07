@@ -48,10 +48,13 @@ getStride = getStrideI @as
 instance (KnownNat x, SliceStride xs) => SliceStride (x ': xs) where
   getStrideI = fromIntegral (natVal (Proxy :: Proxy x)) * getStrideI @xs
 
+-- hope you can swim
+capSize :: forall a s. IP.Prim a => IP.MVector s a -> Int
+capSize mv = case mv of { (IP.MVector _ _ mba) ->  sizeofMutableByteArray mba  `div` (sizeOfT @a) }
 capPrim :: forall a s. (IP.Prim a) => IP.MVector s a -> Int
-capPrim mv = case mv of { (IP.MVector _ _ mba) ->  sizeofMutableByteArray mba  `div` sizeOfT @a }
+capPrim = capSize 
 capUBPrim :: forall a s. (IP.Prim a, Coercible (IU.MVector s a) (IP.MVector s a)) => IU.MVector s a -> Int
-capUBPrim = capPrim @a @s. coerce
+capUBPrim = capPrim @a @s . coerce
 
 sizeOfT :: forall a. IP.Prim a => Int
 sizeOfT = sizeOf (undefined :: a)

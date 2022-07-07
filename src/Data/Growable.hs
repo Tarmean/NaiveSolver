@@ -29,6 +29,7 @@ import Data.Mutable.Each
 import Control.Monad.State
 import Data.Mutable.Slice
 import Data.Mutable.QuickSort (quickSort)
+import Prelude hiding (length)
 
 type instance Index (Grow v s a) = Int
 type instance IxValue (Grow v s a) = a
@@ -51,6 +52,10 @@ coerceF = coerce
 
 class Capacity v where
     getCapacity :: v -> Int
+instance (Capacity (IU.MVector s a), Capacity (IU.MVector s b)) => Capacity (IU.MVector s (a,b)) where
+    getCapacity (IU.MV_2 _ a b) =  min (getCapacity a) (getCapacity b)
+instance (Capacity (IU.MVector s a), Capacity (IU.MVector s b), Capacity (IU.MVector s c)) => Capacity (IU.MVector s (a,b,c)) where
+    getCapacity (IU.MV_3 _ a b c) =  min (getCapacity a) (min (getCapacity b) (getCapacity c))
 instance Capacity (IU.MVector s Int) where
     getCapacity =  capUBPrim
 instance IP.Prim a => Capacity (IP.MVector s a) where
@@ -79,30 +84,51 @@ ensureCap reserve (Grow v)
     roundUpPower2 c
       | c <= target = roundUpPower2 (c * 2)
       | otherwise = c
-append :: (Capacity (v (PrimState m) a), PrimMonad m, V.MVector v a) => a -> Grow v (PrimState m) a -> m (Grow v (PrimState m) a)
-append a m = do
+toState :: MonadState a m => (a -> m a) -> m ()
+toState f = put =<< (f =<< get)
+append :: (MonadState (Grow v (PrimState m) a) m, Capacity (v (PrimState m) a), PrimMonad m, V.MVector v a) => a -> m ()
+append a = toState $ \m -> do
     m <- unsafeGrowCap 1 m
     V.write m (V.length m - 1) a
     pure m
+appendSlice :: (MonadState (Grow (VN.Mutable v) (PrimState m) a) m, PrimMonad m, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a)) => v a -> m ()
+appendSlice v = do
+  v' <- VN.unsafeThaw v
+  appendVec v'
+
+getSlice :: ( PrimMonad m, V.MVector (VN.Mutable v) a, VN.Vector v a) => Int -> Int -> Grow (VN.Mutable v) (PrimState m) a -> m (v a)
+getSlice l r (Grow v) = VN.freeze (V.slice l r v)
 
 newtype Source a = Source a
-appendVec :: (V.MVector v a, PrimMonad m, Capacity (v (PrimState m) a)) => Source (Grow v (PrimState m) a) -> Grow v (PrimState m) a -> m (Grow v (PrimState m) a)
-appendVec (Source r) l = do
+appendVec :: (MonadState (Grow v (PrimState m) a) m, V.MVector v a, PrimMonad m, Capacity (v (PrimState m) a)) => v (PrimState m) a -> m ()
+appendVec r = do
+    l <- get
     let lLen = V.length l
         rLen = V.length r
         totalLen = lLen + rLen
     Grow l <- ensureCap rLen l
     let l' = V.unsafeSlice lLen totalLen l
-    V.unsafeMove l' (unGrow r)
-    pure $ Grow $ V.unsafeSlice 0 totalLen l
+    V.unsafeCopy l' r
+    put $ Grow $ V.unsafeSlice 0 totalLen l
+
+
+pop :: (PrimMonad m, MonadState (Grow (VN.Mutable v) (PrimState m) a) m, V.MVector (VN.Mutable v) a, VN.Vector v a) => Int -> m (Maybe (v a))
+pop i = do
+    l <- gets length
+    if l < i
+    then pure Nothing
+    else do
+        sl <- usingP id (getSlice (l-1) i)
+        id &-> pure . capGrowable (l-i)
+        pure $ Just sl
 
 freeze :: (PrimMonad m, VN.Vector v a) => Grow (VN.Mutable v) (PrimState m) a -> m (v a)
 freeze (Grow v) = VN.freeze v
 
 fromList :: (PrimMonad f, VN.Vector v a) => [a] -> f (Grow (VN.Mutable v) (PrimState f) a)
 fromList ls = fmap Grow $ VN.thaw $ VN.fromList ls
-instance (PrimMonad m, s~PrimState m) => EachM m (Grow IB.MVector s a) where
-  eachM f (Grow t) = eachM f t
+instance (PrimMonad m, s~PrimState m) => EachP m (Grow IB.MVector s a) where
+  eachP f (Grow t) = eachP f t
 
 type MonadGrow r m a = (ValidateIdx (r (PrimState m) a), IxM m (r (PrimState m) a), Index (r (PrimState m) a) ~ Int, IxValue (r (PrimState m) a) ~ a, MonadState (Grow r (PrimState m) a) m, PrimMonad m, V.MVector r a)
 dedup :: (Eq a, MonadGrow r m a) => m ()
@@ -114,14 +140,14 @@ dedup = do
   where
     go :: (Eq a, MonadGrow r m a) => Int -> a -> Int -> Int -> m ()
     go frontier frontierVal candidate cap
-      | candidate == cap = id %- capGrowable frontier
+      | candidate == cap = id &-> pure . capGrowable frontier
       | otherwise = do
         candidateVal <- useP (ixM candidate)
         if frontierVal == candidateVal
         then go frontier frontierVal (candidate+1) cap
         else do
           let frontier' = frontier+1
-          mut (ixM frontier') .- candidateVal
+          mut (ixM frontier') &= candidateVal
           go (frontier+1) candidateVal (candidate+1) cap
 
 capGrowable :: V.MVector v a => Int -> Grow v s a -> Grow v s a
@@ -159,11 +185,31 @@ instance V.MVector v a => V.MVector (Grow v) a where
 
 -- prop> testDedup
 -- +++ OK, passed 100 tests.
--- prop> testQuickSort
 -- +++ OK, passed 100 tests.
--- prop> testAppendVec
 -- +++ OK, passed 100 tests.
-
+-- <BLANKLINE>
+-- GHC.ByteCode.Linker.lookupCE
+-- During interactive linking, GHCi couldn't find the following symbol:
+--   interactive_Ghci1_propEvaluation_closure
+-- This may be due to you not asking GHCi to load extra object files,
+-- archives or DLLs needed by your current session.  Restart GHCi, specifying
+-- the missing library using the -L/path/to/object/dir and -lmissinglibname
+-- flags, or simply by naming the relevant files on the GHCi command line.
+-- Alternatively, this link failure might indicate a bug in GHCi.
+-- If you suspect the latter, please report this as a GHC bug:
+--   https://www.haskell.org/ghc/reportabug
+-- +++ OK, passed 100 tests.
+-- <BLANKLINE>
+-- GHC.ByteCode.Linker.lookupCE
+-- During interactive linking, GHCi couldn't find the following symbol:
+--   interactive_Ghci1_propEvaluation_closure
+-- This may be due to you not asking GHCi to load extra object files,
+-- archives or DLLs needed by your current session.  Restart GHCi, specifying
+-- the missing library using the -L/path/to/object/dir and -lmissinglibname
+-- flags, or simply by naming the relevant files on the GHCi command line.
+-- Alternatively, this link failure might indicate a bug in GHCi.
+-- If you suspect the latter, please report this as a GHC bug:
+--   https://www.haskell.org/ghc/reportabug
 testDedup :: [Int] -> Bool
 testDedup ls = unsafePerformIO $ do
     v <- fromList ls
@@ -181,8 +227,8 @@ testQuickSort ls0 = unsafePerformIO $ do
 testAppendVec :: [Int] -> [Int] -> Bool
 testAppendVec l0 r0 = unsafePerformIO $ do
     l <- fromList l0
-    r <- fromList r0
-    l <- appendVec (Source l) r
+    l <- execStateT (appendSlice (VN.fromList r0)) l
     o <- freeze l
     pure $ IB.toList o == l0 <> r0
 
+-- foo i = zoom (fmap getCompose $ mut (ixM i)) get

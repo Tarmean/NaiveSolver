@@ -47,5 +47,5 @@ swapM :: (MonadState v m, IxM m v) => Index v -> Index v -> m ()
 swapM l r = do
   tl <- useP (ixM l)
   tr <- useP (ixM r)
-  mut (ixM l) .- tr
-  mut (ixM r) .- tl
+  mut (ixM l) &= tr
+  mut (ixM r) &= tl

@@ -5,10 +5,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 module EGraph.Storage where
 
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Mutable as VM
 import qualified Data.IntSet as IS
 import qualified Data.IntMap.Strict as M
 import qualified Data.HashMap.Strict as HM
@@ -21,7 +21,11 @@ import Control.Lens
 import Data.Hashable
 import Optics.Utils
 import Control.Monad.Primitive
-
+import qualified Data.Growable as Grow
+import Data.Mutable.Lens
+import Data.Mutable.Indexing
+import qualified Data.Vector.Mutable as VB
+import qualified Data.Vector.Hashtables as D
 
 -- TODO: track refcounts of classes, and do incremental reachability checks from some root set
 -- This way we can do cheap-ish garbage collection when replacing expressions via CHR
@@ -152,10 +156,11 @@ data Modification = Mods { insertions :: ClassMap (SymbolMap Table), unification
 -- - rebuild hashtable
 --
 -- By using prefix tries/indices we wouldn't need sorting, and could defer normalization until we have too much garbage accumulated?
+type ModQueue s = Grow.Grow VU.MVector s Int
 data RebuildState s = RS {
     dirtiedClasses :: ClassMap ClassSet,
-    pending_inserts :: ClassMap (SymbolMap (VU.MVector s Int)),
-    pending_unions :: [(Id, Id)],
+    pending_inserts :: ClassMap (SymbolMap (ModQueue s)),
+    pending_unions :: Grow.Grow VU.MVector s (Id,Id),
     rewritten :: ClassSet,
     egraph :: EGraph
   } deriving (Generic)
@@ -170,8 +175,9 @@ type M m = StateT (RebuildState (PrimState m)) m
 --     iforOf_ (each <. each) ins $ \symbol row ->
 --       queueInsert c symbol row
 
-queueUnion :: Monad m => Id -> Id -> M m ()
-queueUnion a b = #pending_unions %= ((a,b):)
+queueUnion :: PrimMonad m => Id -> Id -> M m ()
+queueUnion a b = #pending_unions&.Grow.append(a,b)
+
 queueInsert :: PrimMonad m => Id -> Symbol -> Row -> M m ()
 queueInsert c symbol row=
   zoom #egraph (resolveE symbol row) >>= \case
@@ -180,21 +186,20 @@ queueInsert c symbol row=
       #egraph . #hash_lookup . at symbol . non mempty . at row ?= c
       mkInsert c symbol row
 
-getQueueVec :: PrimMonad m => Id -> Symbol -> M m (VM.MVector (PrimState m) Int)
-getQueueVec cid symbol = do
-    v <- preuse (#pending_inserts . ix cid . ix symbol)
-    case v of
-      Just o -> pure o
-      Nothing -> do
-          v <- VM.new 5
-          orDefault (#pending_inserts . at cid) mempty 
-          (#pending_inserts . ix cid . at symbol) ?=  v
-          pure v
+-- getQueueVec :: PrimMonad m => Id -> Symbol -> M m (VM.MVector (PrimState m) Int)
+pending :: (Functor f, s ~ (PrimState m), PrimMonad m) => Id -> Symbol -> MLensLike' f m (RebuildState s) (ModQueue s)
+pending cid symbol = #pending_inserts . at cid . nonP (pure mempty) . at symbol . nonP (Grow.new 4)
+
 
 mkInsert :: (PrimMonad m) => Id -> Symbol -> Row -> M m ()
-mkInsert cid symbol row = do
-   v <- getQueueVec cid symbol
-   VM.write v 0 0
+mkInsert cid symbol row = (pending cid symbol)&.Grow.appendSlice(row)
+
+popInsert :: (PrimMonad m) => Id -> Symbol -> M m (Maybe Row)
+popInsert cid symbol =
+    preuseP (#egraph . #classes . ix cid . #tables . ix symbol . #row_width) >>= \case
+      Nothing -> pure Nothing
+      Just rowWidth -> (pending cid symbol)&.(Grow.pop rowWidth)
+
 
 -- Go through all classes, queue inserts for any table affected by unification
 applyUnifications :: PrimMonad m => ClassSet -> M m ()

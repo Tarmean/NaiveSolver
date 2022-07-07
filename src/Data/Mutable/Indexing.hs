@@ -14,12 +14,12 @@ import qualified Data.Primitive.PrimArray as A
 import qualified Data.Vector.Hashtables as HT
 import Data.Vector.Hashtables.Internal (DeleteEntry)
 import Data.Hashable
-import Data.Foldable (traverse_)
+import Data.Mutable.Distributive
 
 
 
 ixLens
-    :: (Monad f, Traversable g)
+    :: (Monad f, Distributes f g)
     => (v -> ix -> f a)
     -> (v -> ix -> a -> f ())
     -> ix
@@ -28,7 +28,7 @@ ixLens tRead tWrite = fid $ \i f m ->
     Compose $ do
       a <- tRead m i
       fa <- getCompose (f a)
-      traverse (tWrite m i) fa
+      traverseD (tWrite m i) fa
   where fid = id
 
 class ValidateIdx v where
@@ -81,17 +81,17 @@ instance (Hashable k, V.MVector vs v, V.MVector ks k, PrimMonad m, s ~ PrimState
            Nothing -> pure (pure ())
            Just v -> do
               fv <- getCompose $ f v
-              traverse (HT.insert s k) fv
+              traverseD (HT.insert s k) fv
    ixM k f s = Compose $ do
        HT.lookup s k >>= \case
            Nothing -> error "ixM: key not found"
            Just v -> do
               fv <- getCompose $ f v
-              traverse (HT.insert s k) fv
+              traverseD (HT.insert s k) fv
 
 
 class IxM m a => AtM m a where
-    atM :: Index a -> MLens m a (Maybe (IxValue a))
+    atM :: Distributes m f => Index a -> MLensLike' f m a (Maybe (IxValue a))
 instance (PrimMonad m, Eq k, Hashable k, s ~ PrimState m, DeleteEntry ks, V.MVector vs v, V.MVector ks k, DeleteEntry vs) => AtM m (HT.Dictionary s ks k vs v) where
     atM k f s = Compose $ do
         mo <- HT.lookup s k
@@ -99,5 +99,5 @@ instance (PrimMonad m, Eq k, Hashable k, s ~ PrimState m, DeleteEntry ks, V.MVec
         let
           cont Nothing = HT.delete s k
           cont (Just o) = HT.insert s k o
-        fu <- traverse cont fa
+        fu <- traverseD cont fa
         pure $ s <$ fu

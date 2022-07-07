@@ -10,23 +10,24 @@ import Data.Mutable.Indexing ()
 import Data.Functor.Compose
 import Control.Applicative
 import qualified Data.Vector.Hashtables as HT
+import Data.Mutable.Distributive
 
-class EachM m a where
-   eachM :: LValTraversal m a (IxValue a)
-instance (PrimMonad m, s~PrimState m) => EachM m (IB.MVector s a) where
-  eachM f s = Compose $ do
+class EachP m a where
+   eachP :: LValTraversal m a (IxValue a)
+instance (PrimMonad m, s~PrimState m) => EachP m (IB.MVector s a) where
+  eachP f s = Compose $ do
     let
       step i = do
           o <- V.read s i
           fo <- getCompose $ f o
-          traverse (V.write s i) fo
+          traverseD (V.write s i) fo
     foldl1 (liftA2 $ liftA2 (<>))  $ fmap step [0..V.length s-1]
-instance (V.MVector ks k, V.MVector vs v, Hashable k, Eq k, PrimMonad m, s~PrimState m) => EachM m (HT.Dictionary s ks k vs v) where
-  eachM f s = Compose $ do
+instance (V.MVector ks k, V.MVector vs v, Hashable k, Eq k, PrimMonad m, s~PrimState m) => EachP m (HT.Dictionary s ks k vs v) where
+  eachP f s = Compose $ do
 
     let
       step (k, v) = do
           fo <- getCompose $ f v
-          traverse (HT.insert s k) fo
+          traverseD (HT.insert s k) fo
     ls <- HT.toList s
     foldl1 (liftA2 $ liftA2 (<>))  $ fmap step ls

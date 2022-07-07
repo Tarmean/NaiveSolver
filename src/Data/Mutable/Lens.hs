@@ -1,5 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FunctionalDependencies #-}
 module Data.Mutable.Lens where
 
 import Data.Functor.Compose
@@ -8,6 +10,9 @@ import Control.Monad.Trans
 import Control.Monad.State
 import Data.Monoid
 import Control.Lens
+import Data.Mutable.Internal.MutZoom (JoinZoom (joinZoom))
+import Data.Mutable.Distributive
+import Control.Monad.Primitive (PrimState)
 
 
 
@@ -15,7 +20,7 @@ import Control.Lens
 -- | A 'mutable borrow'
 -- Treat an in-place lens as a normal lens by returning the old location
 -- mut (#counters .$ ixM 1) .= 4
-mut :: (Functor f, Functor m, Traversable f) => LValLensLike f m s a -> MLensLike' f m s a
+mut :: (Functor f, Functor m) => LValLensLike f m s a -> MLensLike' f m s a
 mut l k s = s <$ l k s
 
 instance (MonadIO m, Applicative f, Monad (Compose m f)) => MonadIO (Compose m f) where
@@ -27,27 +32,38 @@ instance (MonadIO m, Applicative f, Monad (Compose m f)) => MonadIO (Compose m f
 (.$) l r f s = Compose $ fmap getConst $ getCompose $ l (\a -> Compose $ Const <$> getCompose (r f a)) s
 infixr 9 .$
 
+-- | Call a method on a location
+--
+--     pushCollection idx val = mut(#collections .$ atM idx . nonP (V.new 1))&.(push val)
+--
+-- This could re-allocate the vector we push on, invalidating the old reference.
+-- To reflect this, we use `push :: MonadState (V.Vector (PrimState m) a) m => m ()`.
+-- The state monad carries the implicit 'this' reference - to call a method, we must zoom into the `this` location.
+-- While calling
+-- - The outer state contains the containing enviroment, such as `#collections`
+-- - The focused (this) state contains the vector we update
+-- - The monadic lens doesn't have access to either state, but it can use the underlying monad
+(&.) :: (JoinZoom m1 (Zoomed m2 c t), Zoom m2 n s t, Applicative m1) => ((s -> Compose m1 (Zoomed m2 c) s) -> t -> Compose m1 (Zoomed m2 c) t) -> m2 c -> n c
+(&.) l m = zoom flattenLens m
+  where flattenLens l' s = joinZoom $ getCompose $ l (Compose . pure . l') s 
+
+class CovHack a b | a -> b, b -> a
+instance CovHack a b => CovHack a b
 -- | Mutate a place, possibly returning a new value
 -- #fooArray %- \v ->
 --     V.ensureCapacity (V.length v + 1) v
-(=-) :: MonadState s m => MLensLike' Identity m s a -> (a -> m a) -> m ()
-(=-) = mutateP
-
-(%-) :: MonadState s m => MLensLike' Identity m s a -> (a -> a) -> m ()
-(%-) l f = mutateP l (pure . f)
-
-(.-) :: MonadState s m => MLensLike Identity m s s a a -> a -> m ()
-(.-) l x = mutateP l (\_ -> pure x)
-
-(?-) :: MonadState s m => MLensLike' Identity m s (Maybe a) -> a -> m ()
-(?-) l x = l .- Just x
+infix 4 &->
+infix 4 &=
+infix 4 &.
+(&->) :: MonadState s m => MLensLike' Identity m s a -> (a -> m a) -> m ()
+(&->) = mutateP
+(&=) :: MonadState s m => MLensLike Identity m s s a a -> a -> m ()
+(&=) l x = mutateP l (\_ -> pure x)
 
 usingP :: MonadState s m => MGetter x m s t a b -> (a -> m x) -> m x
 usingP l inj = do
   s <- get 
   mkGetter l s (inj)
--- usesP :: MonadState s m => MGetter x m s t a b -> (a -> x) -> m x
--- usesP l inj = usingP l (pure . inj)
 useP :: MonadState s m => MGetter a m s t a b -> m a
 useP l = usingP l pure
 preuseP :: MonadState s m => MGetter (First a) m s t a b -> m (Maybe a)
@@ -78,6 +94,15 @@ updateP f k = do
   With x s' <- getCompose $ f (Compose . fmap (uncurry $ flip With) . k) s
   put s'
   pure x
+tryUpdateP :: (MonadState s m) => MLensLike' (Compose Maybe (With x)) m s a -> (a -> m (a, x)) -> m (Maybe x)
+tryUpdateP f k = do
+  s <- get
+  out <-  getCompose $ f (Compose . fmap (Compose . Just . uncurry (flip With)) . k) s
+  case getCompose out of
+      Nothing -> pure Nothing
+      Just (With x s') -> do
+          put s'
+          pure (Just x)
 -- | Swap location with a new value, return the old value
 --
 --     takeArray :: M (V.Vector Int)
@@ -85,33 +110,41 @@ updateP f k = do
 swapP :: (MonadState s m) => MLensLike' (With a) m s a -> m a -> m a
 swapP f k = updateP f (\a -> (, a) <$> k)
 
+-- | Tries to swap the location with the update thunk
+-- If the location exists, return the old value
+-- If the location doesn't exist, return nothing
+trySwapP :: (MonadState s m) => MLensLike' (Compose Maybe (With a)) m s a -> m a -> m (Maybe a)
+trySwapP f k = tryUpdateP f (\a -> ((,a)) <$> k)
+
 
 mkGetter :: Functor m => MGetter x m s t a b -> s -> (a -> m x) -> m x
 mkGetter l s f = fmap getConst $ getCompose $ l (Compose . fmap Const . f) s
 
-nonM :: (Monad m) => m a -> MLens m (Maybe a) a
-nonM m k Nothing = Just <$> Compose (getCompose . k =<< m)
-nonM _ k (Just a) = Just <$> k a
+nonP :: (Functor f, Monad m) => m a -> MLensLike' f m (Maybe a) a
+nonP m k Nothing = Just <$> Compose (getCompose . k =<< m)
+nonP _ k (Just a) = Just <$> k a
 
+nonSet :: (Functor f, Monad m) => a -> MLensLike' f m (Maybe a) a
+nonSet a = nonP (pure a)
 
 type MGetter r m s t a b = (a -> Compose m (Const r) b) -> s -> Compose m (Const r) t
 
 -- Most general monadic lenses
 type MLensLike' f m s a = MLensLike f m s s a a
 type MLensLike f m s t a b =(a -> Compose m f b) -> s -> Compose m f t
-type MLens m s a = forall f. Traversable f => (a -> Compose m f a) -> s -> Compose m f s
+-- type MLens m s a = forall f. Traversable f => (a -> Compose m f a) -> s -> Compose m f s
 
 -- Mutating lenses don't return anything because they update in-place
-type LValLens m s a = forall f. Traversable f => (a -> Compose m f a) -> s -> Compose m f ()
-type LValLensLike f m s a = Traversable f => (a -> Compose m f a) -> s -> Compose m f ()
+type LValLens m s a = forall f. Distributes m f => (a -> Compose m f a) -> s -> Compose m f ()
+type LValLensLike f m s a = (a -> Compose m f a) -> s -> Compose m f ()
 
 -- Mutating traversals don't return anything because they update in-place
-type LValTraversal m s a = forall f. (Monoid (f ()), Applicative f, Traversable f) => (a -> Compose m f a) -> s -> Compose m f ()
-type LValTraversalLike f m s a = (Applicative f, Traversable f) => (a -> Compose m f a) -> s -> Compose m f ()
+type LValTraversal m s a = forall f. (Monoid (f ()), Applicative f, Distributes m f) => (a -> Compose m f a) -> s -> Compose m f ()
+type LValTraversalLike f m s a = (Applicative f, Distributes m f) => (a -> Compose m f a) -> s -> Compose m f ()
 
 data With s a = With s a
   deriving (Functor, Traversable, Foldable)
+instance Applicative m => Distributes m (With s)
 instance Monoid s => Applicative (With s) where
   pure = With mempty
   With l f <*> With r a = With (l <> r) (f a)
-

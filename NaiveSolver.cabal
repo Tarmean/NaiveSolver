@@ -27,12 +27,13 @@ library
   exposed-modules:
       Arith
       Data.Growable
+      Data.Mutable.Distributive
       Data.Mutable.Each
       Data.Mutable.Indexing
+      Data.Mutable.Internal.MutZoom
       Data.Mutable.Lens
       Data.Mutable.QuickSort
       Data.Mutable.Slice
-      Data.MutLens
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
