@@ -2,6 +2,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DerivingVia #-}
 module Data.Mutable.Lens where
 
 import Data.Functor.Compose
@@ -13,6 +15,9 @@ import Control.Lens
 import Data.Mutable.Internal.MutZoom (JoinZoom (joinZoom))
 import Data.Mutable.Distributive
 import Control.Monad.Primitive (PrimState)
+import Data.Profunctor
+import Control.Arrow (Kleisli)
+import Data.Distributive
 
 
 
@@ -23,6 +28,8 @@ import Control.Monad.Primitive (PrimState)
 mut :: (Functor f, Functor m) => LValLensLike f m s a -> MLensLike' f m s a
 mut l k s = s <$ l k s
 
+instance (Monad m, Monad f, Distributes m f) => Monad (Compose m f) where
+    (Compose m) >>= f = Compose $ fmap join $ join (fmap (traverseD (getCompose . f)) m)
 instance (MonadIO m, Applicative f, Monad (Compose m f)) => MonadIO (Compose m f) where
     liftIO m = Compose $ pure <$> liftIO m
 
@@ -140,6 +147,26 @@ type LValLensLike f m s a = (a -> Compose m f a) -> s -> Compose m f ()
 
 -- Mutating traversals don't return anything because they update in-place
 type LValTraversal m s a = forall f. (Monoid (f ()), Applicative f, Distributes m f) => (a -> Compose m f a) -> s -> Compose m f ()
+
+fmap2 :: (Functor f1, Functor f2) => (a -> b) -> f1 (f2 a) -> f1 (f2 b)
+fmap2 f = fmap (fmap f)
+
+newtype MArr m f a b = MArr { unMArr :: Kleisli (Compose m f) a b }
+deriving instance (Functor m, Functor f) => Functor (MArr m f a)
+deriving instance (Applicative m, Applicative f) => Applicative (MArr m f a)
+deriving instance (Alternative m, Alternative f) => Alternative (MArr m f a)
+deriving instance (Distributes m f, Monad m, Monad f) => Monad (MArr m f a)
+deriving instance (Monad (Compose m f)) => Profunctor (MArr m f)
+deriving instance (Monad (Compose m f)) => Choice (MArr m f)
+deriving instance (MonadFix (Compose m f)) => Costrong (MArr m f)
+deriving instance (Monad (Compose m f)) => Strong (MArr m f)
+deriving instance (Monad (Compose m f), Distributive (Compose m f)) => Closed (MArr m f)
+
+ --
+-- newtype IMArr i m f a b = IMArr { unMArr :: i -> a -> m (f b) }
+--    deriving (Alternative, Applicative, Functor, Monad, MonadPlus, Choice, Closed, Costrong, Profunctor, Strong, Rewrapped, Wrapped) via Kleisli (Compose m f) a b
+-- type MArrI i m f a b = Kleisli (Compose ((->) i) (Compose m f)) a b
+
 type LValTraversalLike f m s a = (Applicative f, Distributes m f) => (a -> Compose m f a) -> s -> Compose m f ()
 
 data With s a = With s a

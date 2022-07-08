@@ -1,7 +1,11 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 module Data.Mutable.Slice where
 import GHC.TypeLits ( KnownNat, Nat, natVal )
 import Control.Lens ( Index, IxValue )
@@ -12,11 +16,53 @@ import qualified Data.Vector.Unboxed.Mutable as IU
 import Data.Coerce ( coerce, Coercible )
 import Data.Primitive ( sizeofMutableByteArray, sizeOf )
 import Data.Mutable.Indexing
+import qualified Data.Vector.Generic.Mutable as VGM
+import Unsafe.Coerce (unsafeCoerce)
 
-newtype Slice v s (xs :: [Nat]) a = Slice (v s a)
+type family ValOf v (xs :: [Nat]) s a where
+  ValOf _ '[] _ a  = a
+  ValOf v (_ ': xs) s a = Slice v xs s a
+data Slice v (xs :: [Nat]) s a where
+    Slice :: !(v s a) -> Slice v xs s a
+
+
+-- class IsSlice ls o where
+-- instance IsSlice (Slice v (x ': y ': xs) s e) (Slice v (y ': xs) s e) where
+-- instance IsSlice (Slice v '[x] s e) e where
+
+-- unsafeSlice :: forall v s a o xs. (BaseVal o ~ a) => v s a -> Slice v xs s o
+-- unsafeSlice = unsafeCoerce @(((ValOf v xs s a) ~ o, BaseVal o ~ a) => (v s a) -> Slice v xs s o) @((v s a) -> Slice v xs s o) Slice
+
 type family SliceIndex d where
-  SliceIndex (Slice v s '[x] a) = Index (v s a)
-  SliceIndex (Slice v s (_ ': xs) a) = Int
+  SliceIndex (Slice v '[x] s  a) = Index (v s a)
+  SliceIndex (Slice v (_ ': xs) s  a) = Int
+class RowWidth (xs :: [Nat]) where
+    width :: Int
+instance RowWidth '[] where
+    width = 1
+instance (RowWidth xs, KnownNat x) => RowWidth (x ': xs) where
+    width = fromIntegral (natVal (Proxy @x)) * width @xs
+
+-- instance (VGM.MVector (Slice v (y ': xs)) (DropOne e)) => VGM.MVector (Slice v (x ': y ': xs)) e where
+--   basicLength (Slice a) = VGM.basicLength (Slice a)
+--   {-# INLINE basicLength #-}
+--   basicUnsafeSlice l r (Slice a)  = Slice (VGM.slice (l * width @xs) (r * width @xs) a)
+--   basicOverlaps (Slice l) (Slice r) = VGM.basicOverlaps l r
+--   basicUnsafeNew len = unsafeSlice <$> VGM.basicUnsafeNew (len * width @xs)
+--   basicInitialize (Slice l) = VGM.basicInitialize l
+--   basicUnsafeRead (Slice l) idx  = undefined
+--   basicUnsafeWrite = undefined
+-- instance (RowWidth xs, BaseVal e ~ a, VGM.MVector v a) => VGM.MVector (Slice v '[]) e where
+--   basicLength (Slice a) = VGM.basicLength a
+--   {-# INLINE basicLength #-}
+--   basicUnsafeSlice l r (Slice a)  = Slice (VGM.slice (l * width @xs) (r * width @xs) a)
+--   basicOverlaps (Slice l) (Slice r) = VGM.basicOverlaps l r
+--   basicUnsafeNew len = unsafeSlice <$> VGM.basicUnsafeNew (len * width @xs)
+--   basicInitialize (Slice l) = VGM.basicInitialize l
+--   basicUnsafeRead (Slice l) idx  = undefined
+--   basicUnsafeWrite = undefined
+
+
 
 newtype VecOfSlices v s (xs :: [Nat]) a = VecOfSlices (v s a)
 type instance Index (VecOfSlices v s xs a) = Int

@@ -69,6 +69,7 @@ library
     , base >=4.7 && <5
     , bytestring
     , containers
+    , distributive
     , generic-lens
     , generic-random
     , ghc-prim
@@ -78,6 +79,7 @@ library
     , mtl
     , prettyprinter
     , primitive
+    , profunctors
     , text
     , transformers
     , unordered-containers
@@ -100,6 +102,7 @@ executable NaiveSolver-exe
     , base >=4.7 && <5
     , bytestring
     , containers
+    , distributive
     , generic-lens
     , generic-random
     , ghc-prim
@@ -109,6 +112,7 @@ executable NaiveSolver-exe
     , mtl
     , prettyprinter
     , primitive
+    , profunctors
     , text
     , transformers
     , unordered-containers
@@ -132,6 +136,7 @@ test-suite NaiveSolver-test
     , base >=4.7 && <5
     , bytestring
     , containers
+    , distributive
     , generic-lens
     , generic-random
     , ghc-prim
@@ -141,6 +146,7 @@ test-suite NaiveSolver-test
     , mtl
     , prettyprinter
     , primitive
+    , profunctors
     , text
     , transformers
     , unordered-containers

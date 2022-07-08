@@ -31,3 +31,6 @@ instance (V.MVector ks k, V.MVector vs v, Hashable k, Eq k, PrimMonad m, s~PrimS
           traverseD (HT.insert s k) fo
     ls <- HT.toList s
     foldl1 (liftA2 $ liftA2 (<>))  $ fmap step ls
+
+-- class IEachP m a where
+--    eachP :: LValTraversal m a (IxValue a)

@@ -26,6 +26,8 @@ import Data.Mutable.Lens
 import Data.Mutable.Indexing
 import qualified Data.Vector.Mutable as VB
 import qualified Data.Vector.Hashtables as D
+import Data.Mutable.Distributive
+import Data.Mutable.Each
 
 -- TODO: track refcounts of classes, and do incremental reachability checks from some root set
 -- This way we can do cheap-ish garbage collection when replacing expressions via CHR
@@ -156,11 +158,13 @@ data Modification = Mods { insertions :: ClassMap (SymbolMap Table), unification
 -- - rebuild hashtable
 --
 -- By using prefix tries/indices we wouldn't need sorting, and could defer normalization until we have too much garbage accumulated?
-type ModQueue s = Grow.Grow VU.MVector s Int
+type RowQueue s = Grow.Grow VU.MVector s Int
+type ClassDict s a = D.Dictionary s VU.MVector Id VB.MVector a
+type SymbolDict s a = D.Dictionary s VU.MVector Symbol VB.MVector a
 data RebuildState s = RS {
     dirtiedClasses :: ClassMap ClassSet,
-    pending_inserts :: ClassMap (SymbolMap (ModQueue s)),
-    pending_unions :: Grow.Grow VU.MVector s (Id,Id),
+    new_rows ::ClassDict s (SymbolDict s (RowQueue s)),
+    dirty_ids :: ClassSet,
     rewritten :: ClassSet,
     egraph :: EGraph
   } deriving (Generic)
@@ -176,10 +180,16 @@ type M m = StateT (RebuildState (PrimState m)) m
 --       queueInsert c symbol row
 
 queueUnion :: PrimMonad m => Id -> Id -> M m ()
-queueUnion a b = #pending_unions&.Grow.append(a,b)
+queueUnion a0 b0 = do
+  let 
+    (a,b)
+      | a0 <= b0 = (a0,b0)
+      | otherwise = (b0,a0)
+  (#egraph . #union_find)%=(merge a b)
+  #dirty_ids %= IS.insert b
 
-queueInsert :: PrimMonad m => Id -> Symbol -> Row -> M m ()
-queueInsert c symbol row=
+reinsert :: PrimMonad m => Id -> Symbol -> Row -> M m ()
+reinsert c symbol row=
   zoom #egraph (resolveE symbol row) >>= \case
     Just o -> queueUnion c o
     Nothing -> do
@@ -187,28 +197,33 @@ queueInsert c symbol row=
       mkInsert c symbol row
 
 -- getQueueVec :: PrimMonad m => Id -> Symbol -> M m (VM.MVector (PrimState m) Int)
-pending :: (Functor f, s ~ (PrimState m), PrimMonad m) => Id -> Symbol -> MLensLike' f m (RebuildState s) (ModQueue s)
-pending cid symbol = #pending_inserts . at cid . nonP (pure mempty) . at symbol . nonP (Grow.new 4)
-
+newRowsFor :: (Distributes m f, Functor f, s ~ (PrimState m), PrimMonad m) => Id -> Symbol -> MLensLike' f m (RebuildState s) (RowQueue s)
+newRowsFor cid symbol = #new_rows . atM cid . nonP (D.initialize 2) . atM symbol . nonP (Grow.new 4)
 
 mkInsert :: (PrimMonad m) => Id -> Symbol -> Row -> M m ()
-mkInsert cid symbol row = (pending cid symbol)&.Grow.appendSlice(row)
+mkInsert cid symbol row = (newRowsFor cid symbol)&.Grow.appendSlice(row)
 
-popInsert :: (PrimMonad m) => Id -> Symbol -> M m (Maybe Row)
-popInsert cid symbol =
-    preuseP (#egraph . #classes . ix cid . #tables . ix symbol . #row_width) >>= \case
-      Nothing -> pure Nothing
-      Just rowWidth -> (pending cid symbol)&.(Grow.pop rowWidth)
+traverseIntSet :: (Applicative f) => (Int ->  f Int) -> IS.IntSet -> f IS.IntSet
+traverseIntSet f s = IS.foldr (\i s' -> IS.insert <$> f i <*> s') (pure IS.empty) s
 
-
--- Go through all classes, queue inserts for any table affected by unification
-applyUnifications :: PrimMonad m => ClassSet -> M m ()
-applyUnifications dirty = do
+-- | Go through all classes, queue inserts for any table affected by unification
+reinsertOld :: PrimMonad m => ClassSet -> M m ()
+reinsertOld dirty = do
     ioverM_ (#egraph . #classes . itraversed <.> #tables . itraversed) $ \(cid, symbol) table -> do
         unless (table.references `IS.disjoint` dirty) $ do
             forM_ (tableRows table) $ \row -> do
                 row' <- zoom #egraph (normalizeRow row)
-                when (row' /= row) (queueInsert cid symbol row')
-            -- UUUUGH fix this nonsense, this doesn't fuse
-            refs' <- mapM (zoom #egraph . normalize) (IS.toList table.references)
-            #egraph . #classes . ix cid . #tables . ix symbol . #references .= IS.fromList refs'
+                when (row' /= row) (reinsert cid symbol row')
+            refs' <- zoom #egraph $ traverseIntSet normalize table.references
+            #egraph . #classes . ix cid . #tables . ix symbol . #references .= refs'
+
+fixNew :: PrimMonad m => ClassSet -> M m ()
+fixNew dirty = do
+  undefined
+    -- mut(#new_rows .$ ieachP .$ ieachP) &-> \(x:: ()) -> undefined
+        -- unless (table.references `IS.disjoint` dirty) $ do
+        --     forM_ (tableRows table) $ \row -> do
+        --         row' <- zoom #egraph (normalizeRow row)
+        --         when (row' /= row) (reinsert cid symbol row')
+        --     refs' <- zoom #egraph $ traverseIntSet normalize table.references
+        --     #new_rows . ix cid . ix symbol . #references .= refs'

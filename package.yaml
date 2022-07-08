@@ -38,7 +38,8 @@ dependencies:
 - unordered-containers
 - vector-hashtables
 - generic-lens
-
+- profunctors
+- distributive
 library:
   source-dirs: src
 ghc-options:
