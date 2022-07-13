@@ -35,7 +35,7 @@ markKnown learned s = execState (go learned) (mempty, s)
     go :: Ord a => [a] -> State (S.Set a, Pending a) ()
     go [] = pure ()
     go (x:xs) = do
-      alreadyMarked <- gets (has $ _1 . at x)
+      alreadyMarked <- gets (has $ _1 . ix x)
       if alreadyMarked
       then go xs
       else do

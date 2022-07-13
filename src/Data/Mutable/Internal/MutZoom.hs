@@ -1,30 +1,46 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
-module Data.Mutable.Internal.MutZoom (JoinZoom (joinZoom)) where
+module Data.Mutable.Internal.MutZoom (BaseMonad, JoinZoom (joinZoom)) where
 import Control.Lens.Internal.Zoom
 import Control.Monad
 import Data.Functor.Compose (Compose(..))
 import Control.Lens (Zoomed)
 import Data.Mutable.Distributive
+import Control.Monad.State (StateT)
+import Data.Kind (Type)
+import Control.Monad.Trans.Writer (WriterT)
+import Control.Monad.Reader (ReaderT)
 
-class Monad m => JoinZoom m n | n -> m where
-    joinZoom :: m n -> n
-instance Monad m => JoinZoom m (Focusing m s t) where
+type family BaseMonad (m :: Type -> Type) :: Type -> Type
+type instance BaseMonad (StateT s m) = m
+type instance BaseMonad (WriterT r m) = BaseMonad m
+type instance BaseMonad (ReaderT r m) = BaseMonad m
+type instance BaseMonad (Focusing m s) = m
+type instance BaseMonad (FocusingWith w m s) = m
+type instance BaseMonad (FocusingPlus w k s) = BaseMonad (k (s,w))
+type instance BaseMonad (FocusingOn f k s) = BaseMonad (k (f s))
+type instance BaseMonad (FocusingMay k s) = BaseMonad (k (May s))
+type instance BaseMonad (FocusingErr e k s) = BaseMonad (k (Err e s))
+type instance BaseMonad (FocusingFree f m k s) = BaseMonad (k (Freed f m s))
+
+class (Monad (BaseMonad n)) => JoinZoom n where
+    joinZoom :: BaseMonad n (n a) -> n a
+instance Monad m => JoinZoom (Focusing m s) where
     joinZoom = Focusing . join . fmap unfocusing
-instance Monad m => JoinZoom m (FocusingWith w m s t) where
+instance Monad m => JoinZoom (FocusingWith w m s) where
     joinZoom = FocusingWith . join . fmap unfocusingWith
 
-instance (Monad m, JoinZoom m (k (s,w) a)) => JoinZoom m (FocusingPlus w k s a) where
+instance (JoinZoom (k (s,w))) => JoinZoom (FocusingPlus w k s) where
     joinZoom = FocusingPlus . joinZoom . fmap unfocusingPlus
-instance (JoinZoom m (k (f s) a), Monad m) => JoinZoom m (FocusingOn f k s a) where
+instance (JoinZoom (k (f s))) => JoinZoom (FocusingOn f k s) where
     joinZoom = FocusingOn . joinZoom . fmap unfocusingOn
 
-instance (JoinZoom m (k (May s) a), Monad m) => JoinZoom m (FocusingMay k s a) where
+instance (JoinZoom (k (May s))) => JoinZoom (FocusingMay k s) where
     joinZoom = FocusingMay . joinZoom . fmap unfocusingMay
-instance (JoinZoom m (k (Err e s) a), Monad m) => JoinZoom m (FocusingErr e k s a) where
+instance (JoinZoom (k (Err e s))) => JoinZoom (FocusingErr e k s) where
     joinZoom = FocusingErr . joinZoom . fmap unfocusingErr
-instance (JoinZoom m (k (Freed f m s) a), Monad m) => JoinZoom m (FocusingFree f m k s a) where
+instance (JoinZoom (k (Freed f m s)), Monad m) => JoinZoom (FocusingFree f m k s) where
     joinZoom = FocusingFree . joinZoom . fmap unfocusingFree
 
 newtype AddLayerZ k m s a = AddLayerZ { runAddLayerZ :: m (k s a) }

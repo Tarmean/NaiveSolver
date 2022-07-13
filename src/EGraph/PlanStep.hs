@@ -20,7 +20,7 @@ the time
 module EGraph.PlanStep (collectSteps, MatchEnv(..), DiscoverKind(..), Stats(..)) where
 import EGraph.PlanTypes
 
-import Control.Monad.State
+import Control.Monad.State.Strict
     ( forM_, gets, MonadState(state), StateT(runStateT) )
 import Control.Applicative ( asum )
 
@@ -30,11 +30,12 @@ import Control.Lens
 import qualified Data.Set as S
 import qualified Data.Map as M
 
-import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import EGraph.Types (Elem'(..))
-import EGraph.Pending ( Pending, markKnown )
+import EGraph.Pending ( markKnown )
 import Control.Monad.Trans.Writer ( WriterT(runWriterT), tell )
+import Debug.Trace (traceM)
+import Control.Monad (when)
 {-
  [NOTE: Pattern Matching]
  Given a rule `a + (b * a) => (b+1) * a` we must match the pattern `a + (b * a)`.
@@ -74,10 +75,6 @@ collectSteps env = runStateT (runWriterT step) env
          pure c
 
 
-instance Semigroup Stats where
-    Stats a b c d <> Stats a' b' c' d' = Stats (a <> a') (b <> b') (c <> c')  (d + d')
-instance Monoid Stats where
-    mempty = Stats mempty mempty mempty 0
 type M = WriterT Stats (StateT MatchEnv [])
 
 amb :: [a] -> M a
@@ -104,15 +101,23 @@ getElem i =
        unwrap (Right o) = o
 markArgKnown :: ExprNodeId -> DiscoverKind -> M ()
 markArgKnown node potentialReason = do
-    known <- gets $ has (#knownClass . at node)
+    known <- gets $ has (#knownClass . ix node)
+    -- traceM $ "markArgKnown " <> show node <> " " <> show potentialReason <> " " <> show known
     if known
     then tellCheck potentialReason
     else do
       tellReason node potentialReason
       tell mempty { learned = 1 }
+markJoin :: ExprNodeId -> M ()
+markJoin node = do
+    known <- gets $ has (#knownClass . ix node)
+    -- traceM $ "markJoin " <> show node <> " " <>  show known
+    when (not known) $ do
+      tellReason node FreeJoin
+      tell mempty { learned = 1 }
 
 tellCheck :: DiscoverKind -> M ()
-tellCheck discover = tell mempty { allowsChecks = [discover] }
+tellCheck discover = tell mempty { allowsChecks = S.singleton discover }
 tellReason :: ExprNodeId -> DiscoverKind -> M ()
 tellReason node reason = #knownClass . at node ?= reason
 
@@ -124,10 +129,21 @@ processElem :: ExprNodeId -> M ()
 processElem pid = do
    p <- getElem pid
    tellPreKnown p
-   forM_ (zip [0..] p.argIds) $ \(idx, arg) -> markArgKnown arg (ArgOf pid idx)
-   newGround <- newGroundNodes (pid : p.argIds)
-   forM_ newGround $ \ground -> markArgKnown ground (CongruenceLookup pid)
+   markJoin pid
+   forM_ (zip [0..] p.argIds) $ \(idx, arg) -> markArgKnown arg (ArgOf arg pid idx)
+   newGround <- S.delete pid <$> newGroundNodes (pid : p.argIds)
+   
+   -- traceM $ "new ground$ "<> show newGround <> " p " <> show p
+   forM_ newGround $ \ground -> do
+       whenM (isExpr ground) $ markArgKnown ground (CongruenceLookup ground pid)
    tell mempty { allowsDiscovers = newGround }
    #possiblyInconsistent %= (S.\\ newGround)
 
+isExpr :: ExprNodeId -> M Bool
+isExpr i = gets $ has (#patGraph . #definitions . at i . non (error "getElem: no such element") . _Right)
 
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM p a = do
+   p >>= \case
+     True -> a
+     False -> pure ()

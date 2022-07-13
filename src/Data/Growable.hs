@@ -30,9 +30,20 @@ import Control.Monad.State
 import Data.Mutable.Slice
 import Data.Mutable.QuickSort (quickSort)
 import Prelude hiding (length)
+import Data.Mutable.Distributive (HasMonad)
+import Data.Foldable (traverse_)
+import Data.List (unfoldr)
 
 type instance Index (Grow v s a) = Int
 type instance IxValue (Grow v s a) = a
+
+chunksOfM :: (Applicative f, V.MVector v a) => Int -> (v s a -> f ()) -> Grow v s a -> f ()
+chunksOfM w f (Grow v) = traverse_ f theChunks
+  where
+    theChunks = unfoldr go v
+    go x
+      | V.null x = Nothing
+      | otherwise = Just (V.splitAt w x)
 
 instance (Index (v n a) ~ Int, ValidateIdx (v n a)) => ValidateIdx (Grow v n a) where
   validateIdx i = validateIdx i . unGrow
@@ -91,7 +102,7 @@ append a = toState $ \m -> do
     m <- unsafeGrowCap 1 m
     V.write m (V.length m - 1) a
     pure m
-appendSlice :: (MonadState (Grow (VN.Mutable v) (PrimState m) a) m, PrimMonad m, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a)) => v a -> m ()
+appendSlice :: forall m v a. (MonadState (Grow (VN.Mutable v) (PrimState m) a) m, PrimMonad m, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a)) => v a -> m ()
 appendSlice v = do
   v' <- VN.unsafeThaw v
   appendVec v'
@@ -124,6 +135,9 @@ pop i = do
 
 freeze :: (PrimMonad m, VN.Vector v a) => Grow (VN.Mutable v) (PrimState m) a -> m (v a)
 freeze (Grow v) = VN.freeze v
+
+unsafeFreeze :: (PrimMonad m, VN.Vector v a) => Grow (VN.Mutable v) (PrimState m) a -> m (v a)
+unsafeFreeze (Grow v) = VN.unsafeFreeze v
 
 fromList :: (PrimMonad f, VN.Vector v a) => [a] -> f (Grow (VN.Mutable v) (PrimState f) a)
 fromList ls = fmap Grow $ VN.thaw $ VN.fromList ls

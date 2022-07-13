@@ -184,7 +184,7 @@ instance (Ord a) => PSemigroup (FiniteDomain a) where
     | otherwise = Just $ FD intersect
     where intersect = S.intersection a b
 instance (Ord a) => PLattice (FiniteDomain a) where
-  (<||>) (FD a) (FD b) = Just $ FD $ S.union a b
+  (<||>) (FD a) (FD b) = Is $ FD $ S.union a b
 
 instance (Bounded a, Enum a, Ord a) => RegularSemigroup (FiniteDomain a) where
   FD a ==> FD b = FD (b `S.union` S.difference ((universe :: FiniteDomain a).members)  a)

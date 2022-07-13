@@ -22,6 +22,12 @@ import qualified Data.Map.Merge.Lazy as M
 import Data.Maybe (isJust, isNothing)
 import Control.Applicative ( Alternative(empty) )
 import Control.Monad.Trans.Maybe ( MaybeT(..) )
+import System.Timeout (timeout)
+import Test.QuickCheck.Property (within)
+import Debug.Trace (trace, traceShowId)
+
+main :: IO ()
+main = print "bdd"
 
 class PContains s where
    -- compareC a b == Just LT
@@ -70,7 +76,9 @@ class (PSemigroup s) => PLattice s where
     -- | laws: associative, commutative, idempotent
     -- usually not distributive over <?>, applying it early loses information
     -- (that's why we do case distinction via bdd)
-    (<||>) :: s -> s -> Maybe s
+    (<||>) :: s -> s -> LatticeVal s
+data LatticeVal a = IsTop | IsBot | Is a
+  deriving (Eq, Ord, Show)
 
 -- | deduplicates information which is saved elsewhere
 -- FIXME: i defined this ad-hoc because I needed the operation, but is this just heyting algebras?
@@ -84,7 +92,7 @@ class PSemigroup a => RegularSemigroup a  where
     -- b <&> (a ==> b) = b
     -- c ==> (a <&> b) ~ (c ==> a) <&> (c ==> b), if <&> is defined
     (==>) :: a -> a -> a
-top :: BoundedLattice a => a
+top :: PMonoid a => a
 top = pempty
 class (PMonoid s, PLattice s) => BoundedLattice s where
     bot :: s
@@ -95,8 +103,9 @@ class (PMonoid s, PLattice s) => BoundedLattice s where
       Just s -> s
     (|||) :: s -> s -> s
     a ||| b = case a <||> b of
-       Nothing -> bot
-       Just s -> s
+       IsBot -> bot
+       IsTop -> top
+       Is s -> s
 
 -- | more accurate than pseudoinverse in RegularSemigroup
 -- (a <> x) <> inv a  = x
@@ -120,6 +129,52 @@ data DD s
 
 type BDD = DD (PMap Var (Val Bool))
 
+kOp :: IsLit a => (DD a -> DD a -> Maybe (DD a)) -> DD a -> DD a -> DD a
+kOp f = go
+  where
+    -- go p l r
+    --   | trace (p <> "kop go " ++ show (l,r)) False = undefined
+ -- trace (p <> "kop out: " <> show o)
+    go l r
+      | Just o <- f l r = o
+    go l r =  iff v lhs rhs
+      where
+        -- lhs = trace (p <> "kop iff lhs" <> show v) $ showThis (p <> "kop lhs out: ") (go ('-':p)lx rx)
+        lhs = (go lx rx)
+        rhs = (go ly ry)
+        -- showThis tag a = a `seq` trace (tag <> show a) a
+        (lx, ly) 
+          | lv == v = split v l
+          | otherwise = (l,l)
+        (rx, ry)
+          | rv == v = split v r
+          | otherwise = (r,r)
+        v = max lv rv
+        lv = varOf l
+        rv = varOf r
+kAnd :: IsLit a => DD a -> DD a -> DD a
+kAnd = kOp step
+  where
+    step IsTrue a = Just a
+    step a IsTrue = Just a
+    step IsFalse _ = Just IsFalse
+    step _ IsFalse = Just IsFalse
+    step a b 
+      | a == b = Just a
+    step _ _ = Nothing
+kOr :: IsLit a => DD a -> DD a -> DD a
+kOr = kOp step
+  where
+    step IsFalse a = Just a
+    step a IsFalse = Just a
+    step IsTrue _ = Just IsTrue
+    step _ IsTrue = Just IsTrue
+    step a b 
+      | a == b = Just a
+    step _ _ = Nothing
+
+
+
 data Tag = Absorbing | Neutral
 
 varOf :: IsLit s => DD s -> Var
@@ -140,8 +195,8 @@ mOr inp = go (inj inp)
       | otherwise = go (M.unionWith (<>) (inj $ filter (/= IsFalse) a) e')
     -- go :: M.Map Var [DD s] -> DD s
     go :: IsLit s => M.Map Var [DD s] -> DD s
-    -- go e
-      -- | trace ("mOr go " ++ show e) False = undefined
+    go e
+      | trace ("mOr go " ++ show e) False = undefined
     -- FIXME: this is horribly inefficient:
     -- If we have invariants at the top we should keep the union of those invariants at the top
     -- - the union environment is weaker than any input environment
@@ -174,7 +229,7 @@ mOr inp = go (inj inp)
 split :: IsLit s => Var -> DD s -> (DD s, DD s)
 split v (If v' l r)
   | v == v' = (l, r)
-  | otherwise = error "illegal split"
+  | otherwise = error $ "illegal split: " <> show v <> ", " <> show (If v' l r)
 split v (And s ls) = 
     case splitLit v s of
        Just (sL, sR) -> (gAnd $ S.fromList $ sL : relL <> invariant, gAnd $ S.fromList $ sR : relR <> invariant)
@@ -185,68 +240,68 @@ split v (And s ls) =
 split _ a = (a,a)
 
 -- testSplit = split 1 $ And (
-mAnd :: forall s. (IsLit s, PMonoid s) => [DD s] -> DD s
+-- mAnd :: forall s. (IsLit s, PMonoid s) => [DD s] -> DD s
 -- mAnd inp
 --   | trace ("mAnd: " ++ show inp) False = undefined
-mAnd inp = flip evalState pempty $ do
-   mo <- runMaybeT (allFlatAnds inp)
-   case mo of
-     Nothing -> pure IsFalse
-     Just (s,o) -> addEnv s <$> go (inj o)
-  where
-    step ls e' = do
-         (done, ls') <- partitionEithers <$> traverse simplifyAnd ls
-         runMaybeT (allFlatAnds ls') >>= \case
-           Nothing -> pure IsFalse
-           Just (s, flatLs) -> 
-             let ls'' = filter (/= IsTrue) flatLs
-             in
-             if any (== IsFalse) ls''
-              then pure IsFalse
-              else do
-                 out <- go $ M.unionWith (<>) e' (inj ls'')
-                 pure $ gAndS s (S.fromList $ out : done)
+-- mAnd inp = flip evalState pempty $ do
+--    mo <- runMaybeT (allFlatAnds inp)
+--    case mo of
+--      Nothing -> pure IsFalse
+--      Just (s,o) -> addEnv s <$> go (inj o)
+--   where
+--     step ls e' = do
+--          (done, ls') <- partitionEithers <$> traverse simplifyAnd ls
+--          runMaybeT (allFlatAnds ls') >>= \case
+--            Nothing -> pure IsFalse
+--            Just (s, flatLs) -> 
+--              let ls'' = filter (/= IsTrue) flatLs
+--              in
+--              if any (== IsFalse) ls''
+--               then pure IsFalse
+--               else do
+--                  out <- go $ M.unionWith (<>) e' (inj ls'')
+--                  pure $ gAndS s (S.fromList $ out : done)
 
-    go e
-      | M.null e = pure IsTrue
-    go e = case M.maxViewWithKey e of
-        Nothing -> pure IsTrue
-        Just ((v, ls), e') ->  do
-         -- traceM $ "go: " ++ show (v, ls)
-         pre <- get
-         if isJust (evalVar @s v pre)
-         then do
-           -- traceM ("skip 1: " ++ show (v, ls))
-           step ls e'
-         else do
-             -- traceM ("split 1: " ++ show (v, ls))
-             t <- withEnv @s (isL v) $ step ls e'
-             -- traceM ("split 2: " ++ show (v, ls))
-             f <- withEnv @s (notL v) $ step ls e'
-             pure $ iff v t f
+--     go e
+--       | M.null e = pure IsTrue
+--     go e = case M.maxViewWithKey e of
+--         Nothing -> pure IsTrue
+--         Just ((v, ls), e') ->  do
+--          -- traceM $ "go: " ++ show (v, ls)
+--          pre <- get
+--          if isJust (evalVar @s v pre)
+--          then do
+--            -- traceM ("skip 1: " ++ show (v, ls))
+--            step ls e'
+--          else do
+--              -- traceM ("split 1: " ++ show (v, ls))
+--              t <- withEnv @s (isL v) $ step ls e'
+--              -- traceM ("split 2: " ++ show (v, ls))
+--              f <- withEnv @s (notL v) $ step ls e'
+--              pure $ iff v t f
 
-    allFlatAnds :: IsLit s => [DD s] -> MaybeT (State s) (s, [DD s])
-    allFlatAnds ls = do
-        env <- get
-        (Just o,s) <- pure (runState (runMaybeT $ traverse flatAnds ls) pempty)
-        env' <- liftMaybe $ env <?> s
-        put env'
-        pure $ (env ==> s, concat o)
+--     allFlatAnds :: IsLit s => [DD s] -> MaybeT (State s) (s, [DD s])
+--     allFlatAnds ls = do
+--         env <- get
+--         (Just o,s) <- pure (runState (runMaybeT $ traverse flatAnds ls) pempty)
+--         env' <- liftMaybe $ env <?> s
+--         put env'
+--         pure $ (env ==> s, concat o)
 
-    flatAnds :: IsLit s => DD s -> MaybeT (State s) [DD s]
-    flatAnds (And s ls) = do
-       tellEnv s
-       lls <- traverse flatAnds $ S.toList ls
-       pure $ concat lls
-    flatAnds a = pure [a]
+--     flatAnds :: IsLit s => DD s -> MaybeT (State s) [DD s]
+--     flatAnds (And s ls) = do
+--        tellEnv s
+--        lls <- traverse flatAnds $ S.toList ls
+--        pure $ concat lls
+--     flatAnds a = pure [a]
 
-    tellEnv s = do
-       env <- get
-       case s <?> env of
-           Nothing -> empty
-           Just s' -> put s'
+--     tellEnv s = do
+--        env <- get
+--        case s <?> env of
+--            Nothing -> empty
+--            Just s' -> put s'
 
-    inj = M.fromListWith (<>) . map (\i -> (varOf i, [i]))
+--     inj = M.fromListWith (<>) . map (\i -> (varOf i, [i]))
 
 liftMaybe :: Applicative m => Maybe s -> MaybeT m s
 liftMaybe = MaybeT . pure
@@ -261,8 +316,8 @@ withEnv s m = do
   pure o
 
 
-foo :: BDD
-foo =  mAnd [If 2 IsTrue IsFalse, If 1 IsTrue IsFalse]
+-- foo :: BDD
+-- foo =  mAnd [If 2 IsTrue IsFalse, If 1 IsTrue IsFalse]
 
 
 simplify :: forall s. IsLit s => DD s -> State s (Either (DD s) (DD s))
@@ -325,7 +380,21 @@ isV :: IsLit s => Var -> Bool -> s
 isV v b = if b then isL v else notL v
 
 instance (Ord k, PLattice v) => PLattice (PMap k v) where
-  (<||>) (PMap l) (PMap r) = Just $ PMap $ M.merge M.dropMissing M.dropMissing (M.zipWithMaybeMatched (const (<||>))) l r
+  (<||>) (PMap l) (PMap r) = toIs $ fmap PMap $ M.mergeA M.dropMissing M.dropMissing (M.zipWithMaybeAMatched (\_ a b -> wrap $ a <||> b)) l r
+    where
+      wrap IsBot = Nothing
+      wrap IsTop = Just Nothing
+      wrap (Is a) = Just (Just a)
+      toIs Nothing = IsBot
+      toIs (Just a) = Is a
+getLatticeVal :: BoundedLattice a => LatticeVal a -> a
+getLatticeVal IsBot = bot
+getLatticeVal (Is a) = a
+getLatticeVal IsTop = top
+notBot :: PMonoid a => LatticeVal a -> Maybe a
+notBot IsBot = Nothing
+notBot (Is a) = Just a
+notBot IsTop = Just top
 
 newtype Val a = Val {unVal :: a}
   deriving (Eq, Ord, Show)
@@ -340,7 +409,7 @@ instance Eq a => POrd (Val a) where
 instance Eq a => PSemigroup (Val a) where
     (<?>) (Val a) (Val b) = if a == b then Just (Val a) else Nothing
 instance (Eq a) => PLattice (Val a) where
-    (<||>) (Val a) (Val b) = if a == b then Just (Val a) else Nothing
+    (<||>) (Val a) (Val b) = if a == b then Is (Val a) else IsTop
  
 data PMap k v = PMap (M.Map k v)
   deriving (Eq, Ord, Show)
@@ -389,21 +458,27 @@ instance IsLit (PMap Var (Val Bool)) where
 a & b = S.insert b a
 
 iff :: (IsLit s) => Var -> DD s -> DD s -> DD s
-iff _ a b | a == b = a
--- iff v IsTrue a = litOr (isL v) a 
--- iff v a IsTrue = litOr (notL v) a
-iff v IsFalse a = litAnd (notL v) a
-iff v a IsFalse = litAnd (isL v) a
 iff v a b
   | Just o <- cofactor True v a b = o
   | Just o <- cofactor False v b a = o
 iff v (And sl vl) (And sr vr)
-  | Just o <-  sl <||> sr = mkOut o
+  | merged == IsBot  = IsFalse
+  | Is a <- merged = mkOut a
+  | merged == IsTop = mkOut pempty
   | not (S.null inters) = mkOut pempty
   where
-    mkOut o = gAndS o  (inters & iff v (gAndS (o ==> sl) (vl S.\\ vr)) (gAndS (o ==> sr)(vr S.\\ vl)))
+    merged = sl <||> sr
+    mkOut o = gAndS o  (inters & ifFixme v (gAndS (o ==> sl) (vl S.\\ vr)) (gAndS (o ==> sr)(vr S.\\ vl)))
+    -- FIXME!!!
+    ifFixme = iffNRec
     inters = S.intersection vl vr
-iff v a b = If v a b
+iff v a b = iffNRec v a b
+
+iffNRec :: IsLit s => Var -> DD s -> DD s -> DD s
+iffNRec _ a b | a == b = a
+iffNRec v IsFalse a = litAnd (notL v) a
+iffNRec v a IsFalse = litAnd (isL v) a
+iffNRec v a b = If v a b
 
 cofactor :: IsLit s => Bool -> Var -> (DD s) -> (DD s) -> Maybe (DD s)
 cofactor b v l (And s ls)
@@ -503,8 +578,8 @@ reduceNaive env (And s ds) = isJust (toEnv env <?> s) && all (reduceNaive env) d
   where
     toEnv (a,b,c,d) = PMap $ M.fromList $ zip [1..] (map Val [a,b,c,d])
 toBDDNaive :: BExpr -> BDD
-toBDDNaive (BAnd e1 e2) = mAnd [toBDDNaive e1, toBDDNaive e2]
-toBDDNaive (BOr e1 e2) = mOr $ [toBDDNaive e1, toBDDNaive e2]
+toBDDNaive (BAnd e1 e2) = kAnd (toBDDNaive e1) (toBDDNaive e2)
+toBDDNaive (BOr e1 e2) = kOr (toBDDNaive e1) (toBDDNaive e2)
 toBDDNaive (BNot (BLit idx)) = And (notL (1+fromEnum idx)) mempty
 toBDDNaive (BLit idx) = And (isL (1+fromEnum idx)) mempty
 toBDDNaive (BNot e) = error $ "Not in NNF " ++ show e
@@ -513,4 +588,32 @@ mkBDD = toBDDNaive . toNNF
 checkEquiv :: BExprEnv -> BExpr -> Bool
 checkEquiv env expr = evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
 checkNaive :: IO ()
-checkNaive = quickCheck $ \env expr -> evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
+checkNaive = quickCheck $  \env expr -> within 1000 $ evalBExpr env expr == reduceNaive env (toBDDNaive (toNNF expr))
+
+searchNonDet :: BExpr -> IO BExpr
+searchNonDet = go
+  where
+    go :: BExpr -> IO BExpr
+    go (BAnd l r) = rec BAnd l r
+    go (BOr l r) = rec BOr l r
+    go a = pure a
+    rec f l r = do
+        a <- doesTerminate l
+        b <- doesTerminate r
+        if a && b
+        then  do
+          putStrLn $ "Terminating: " <> show l
+          putStrLn $ "Also Terminating: " <> show r
+          pure $ f l r
+        else if a then do
+          putStrLn $ "Not terminating: " <> show r
+          go r
+        else do
+          putStrLn $ "Not terminating: " <> show l
+          go l
+doesTerminate :: BExpr -> IO Bool
+doesTerminate = fmap isJust . timeout 1200 . (\x -> x `seq` pure ()) . toBDDNaive
+
+-- !2 && !3 || 2 && 3 && 4 || 2
+-- = !3 || 2
+

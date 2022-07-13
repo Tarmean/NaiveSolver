@@ -1,0 +1,269 @@
+	Tue Jul 12 17:47 2022 Time and Allocation Profiling Report  (Final)
+
+	   NaiveSolver-exe.exe +RTS -N -p -RTS
+
+	total time  =        0.07 secs   (248 ticks @ 1000 us, 8 processors)
+	total alloc = 5,536,131,960 bytes  (excludes profiling overheads)
+
+COST CENTRE MODULE    SRC                            %time %alloc
+
+==          Types     src\Types.hs:410:13-14          37.9   28.6
+<||>        Types     src\Types.hs:(378,3)-(384,26)   10.5   20.0
+addEnv      Types     src\Types.hs:(492,1)-(499,34)    9.7    8.6
+iff.mkOut   Types     src\Types.hs:471:5-102           8.9   34.3
+iff         Types     src\Types.hs:(456,1)-(473,20)    8.5    0.0
+gAnd        Types     src\Types.hs:(502,1)-(518,19)    6.5    0.0
+==>         Types     src\Types.hs:(426,5)-(430,29)    5.2    8.6
+gAndS       Types     src\Types.hs:487:1-29            4.0    0.0
+cofactor    Types     src\Types.hs:(476,1)-(481,26)    2.4    0.0
+==          Types     src\Types.hs:128:13-14           2.4    0.0
+==          Types     src\Types.hs:395:13-14           2.4    0.0
+
+
+                                                                                                            individual      inherited
+COST CENTRE                MODULE                         SRC                           no.      entries  %time %alloc   %time %alloc
+
+MAIN                       MAIN                           <built-in>                    1129           0    0.0    0.0   100.0  100.0
+ CAF                       GHC.IO.Handle.FD               <entire-module>               2243           0    0.0    0.0     0.0    0.0
+ CAF                       GHC.Event.Windows.ConsoleEvent <entire-module>               2209           0    0.0    0.0     0.0    0.0
+ CAF                       GHC.Conc.POSIX                 <entire-module>               2205           0    0.0    0.0     0.0    0.0
+ CAF                       GHC.TopHandler                 <entire-module>               2185           0    0.0    0.0     0.0    0.0
+ CAF                       GHC.IO.StdHandles              <entire-module>               2164           0    0.0    0.0     0.0    0.0
+ CAF                       GHC.IO.Exception               <entire-module>               2158           0    0.4    0.0     0.4    0.0
+ CAF                       GHC.IO.Encoding.CodePage       <entire-module>               2151           0    0.4    0.0     0.4    0.0
+ CAF                       GHC.IO.Encoding                <entire-module>               2150           0    0.0    0.0     0.0    0.0
+ CAF:$fIsLitPMap_$cp2IsLit Types                          src\Types.hs:441:10-36        1250           0    0.0    0.0     0.0    0.0
+ CAF:$s$fEqVal_riLJ        Types                          <no location info>            1240           0    0.0    0.0     0.0    0.0
+  ==                       Types                          src\Types.hs:395:13-14        2335           1    0.0    0.0     0.0    0.0
+ CAF:addEnv1               Types                          <no location info>            1253           0    0.0    0.0     0.0    0.0
+  addEnv                   Types                          src\Types.hs:(492,1)-(499,34) 2341           0    0.0    0.0     0.0    0.0
+   ==                      Types                          src\Types.hs:410:13-14        2342           0    0.0    0.0     0.0    0.0
+ CAF:addEnv2               Types                          <no location info>            1187           0    0.0    0.0     0.0    0.0
+  addEnv                   Types                          src\Types.hs:(492,1)-(499,34) 2339           0    0.0    0.0     0.0    0.0
+   pempty                  Types                          src\Types.hs:420:5-25         2340           1    0.0    0.0     0.0    0.0
+ CAF:cofactor2             Types                          <no location info>            1179           0    0.0    0.0     0.0    0.0
+  gAnd                     Types                          src\Types.hs:(502,1)-(518,19) 2330           0    0.0    0.0     0.0    0.0
+   gAnd.flattenEnv         Types                          src\Types.hs:514:5-66         2331           0    0.0    0.0     0.0    0.0
+    pempty                 Types                          src\Types.hs:420:5-25         2332           1    0.0    0.0     0.0    0.0
+ CAF:kAnd_$skAnd           Types                          src\Types.hs:151:1-4          1264           0    0.0    0.0     0.0    0.0
+  kAnd                     Types                          src\Types.hs:(151,1)-(159,22) 2275           1    0.0    0.0     0.0    0.0
+   kOp                     Types                          src\Types.hs:(133,1)-(149,20) 2276           1    0.0    0.0     0.0    0.0
+ CAF:kOr_$skOr             Types                          src\Types.hs:161:1-3          1265           0    0.0    0.0     0.0    0.0
+  kOr                      Types                          src\Types.hs:(161,1)-(169,22) 2268           1    0.0    0.0     0.0    0.0
+   kOp                     Types                          src\Types.hs:(133,1)-(149,20) 2269           1    0.0    0.0     0.0    0.0
+ CAF:lvl66_riLN            Types                          <no location info>            1245           0    0.0    0.0     0.0    0.0
+  ==                       Types                          src\Types.hs:128:13-14        2284           0    0.0    0.0     0.0    0.0
+   ==                      Types                          src\Types.hs:410:13-14        2285           0    0.0    0.0     0.0    0.0
+ CAF:lvl71_riLX            Types                          <no location info>            1252           0    0.0    0.0     0.0    0.0
+  splitLit                 Types                          src\Types.hs:(447,5)-(449,70) 2309           0    0.0    0.0     0.0    0.0
+ CAF:main1                 Types                          <no location info>            1274           0    0.0    0.0     0.0    0.0
+  main                     Types                          src\Types.hs:30:1-27          2260           1    0.0    0.0     0.0    0.0
+ CAF:main1                 Main                           <no location info>            1136           0    0.0    0.0     0.0    0.0
+  main                     Main                           app\Main.hs:6:1-15            2258           1    0.0    0.0     0.0    0.0
+ CAF:main2                 Types                          <no location info>            1273           0    0.0    0.0     0.0    0.0
+  main                     Types                          src\Types.hs:30:1-27          2262           0    0.0    0.0     0.0    0.0
+ CAF:main3                 Types                          <no location info>            1272           0    0.0    0.0     0.0    0.0
+  main                     Types                          src\Types.hs:30:1-27          2263           0    0.0    0.0     0.0    0.0
+   showsPrec               Types                          src\Types.hs:128:22-25        2264           1    0.0    0.0     0.0    0.0
+ CAF:main4                 Types                          <no location info>            1271           0    0.0    0.0    99.2  100.0
+  main                     Types                          src\Types.hs:30:1-27          2265           0    0.0    0.0    99.2  100.0
+   toBDDNaive              Types                          src\Types.hs:(573,1)-(577,53) 2266           7    0.0    0.0    99.2  100.0
+    fromEnum               Types                          src\Types.hs:534:37-40        2286           4    0.0    0.0     0.0    0.0
+    isL                    Types                          src\Types.hs:442:5-43         2283           2    0.0    0.0     0.0    0.0
+    notL                   Types                          src\Types.hs:443:5-45         2351           2    0.0    0.0     0.0    0.0
+    kAnd                   Types                          src\Types.hs:(151,1)-(159,22) 2277           0    0.0    0.0     0.0    0.0
+     kOp                   Types                          src\Types.hs:(133,1)-(149,20) 2278           0    0.0    0.0     0.0    0.0
+      kOp.go               Types                          src\Types.hs:(137,5)-(149,20) 2279           6    0.0    0.0     0.0    0.0
+       kAnd.step           Types                          src\Types.hs:(153,5)-(159,22) 2280           6    0.0    0.0     0.0    0.0
+        ==                 Types                          src\Types.hs:128:13-14        2281           2    0.0    0.0     0.0    0.0
+         ==                Types                          src\Types.hs:410:13-14        2282           2    0.0    0.0     0.0    0.0
+       iff                 Types                          src\Types.hs:(456,1)-(473,20) 2343           2    0.0    0.0     0.0    0.0
+        ==                 Types                          src\Types.hs:128:13-14        2344           2    0.0    0.0     0.0    0.0
+        litAnd             Types                          src\Types.hs:529:1-23         2345           2    0.0    0.0     0.0    0.0
+         addEnv            Types                          src\Types.hs:(492,1)-(499,34) 2346           2    0.0    0.0     0.0    0.0
+          <?>              Types                          src\Types.hs:(414,5)-(418,28) 2349           2    0.0    0.0     0.0    0.0
+          ==               Types                          src\Types.hs:410:13-14        2347           2    0.0    0.0     0.0    0.0
+        isL                Types                          src\Types.hs:442:5-43         2348           1    0.0    0.0     0.0    0.0
+        notL               Types                          src\Types.hs:443:5-45         2382           1    0.0    0.0     0.0    0.0
+       kOp.go.(...)        Types                          src\Types.hs:(144,9)-(146,29) 2297           2    0.0    0.0     0.0    0.0
+        split              Types                          src\Types.hs:(225,1)-(235,17) 2298           1    0.0    0.0     0.0    0.0
+         gAnd              Types                          src\Types.hs:(502,1)-(518,19) 2316           2    0.0    0.0     0.0    0.0
+          addEnv           Types                          src\Types.hs:(492,1)-(499,34) 2320           2    0.0    0.0     0.0    0.0
+           ==              Types                          src\Types.hs:410:13-14        2338           1    0.0    0.0     0.0    0.0
+          gAnd.flatten     Types                          src\Types.hs:(517,5)-(518,19) 2318           2    0.0    0.0     0.0    0.0
+          gAnd.flattenEnv  Types                          src\Types.hs:514:5-66         2317           2    0.0    0.0     0.0    0.0
+           gAnd.merge1     Types                          src\Types.hs:(515,5)-(516,31) 2328           1    0.0    0.0     0.0    0.0
+            <?>            Types                          src\Types.hs:(414,5)-(418,28) 2329           1    0.0    0.0     0.0    0.0
+          ==               Types                          src\Types.hs:128:13-14        2319           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:233:5-66         2307           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:234:5-41         2303           1    0.0    0.0     0.0    0.0
+          splitMap         Types                          src\Types.hs:(181,1)-(182,25) 2304           1    0.0    0.0     0.0    0.0
+           splitMap.ls'    Types                          src\Types.hs:182:11-25        2305           1    0.0    0.0     0.0    0.0
+         split.invariant   Types                          src\Types.hs:233:5-66         2308           1    0.0    0.0     0.0    0.0
+         split.rel         Types                          src\Types.hs:233:5-66         2306           1    0.0    0.0     0.0    0.0
+         split.relL        Types                          src\Types.hs:234:5-41         2323           1    0.0    0.0     0.0    0.0
+         split.relR        Types                          src\Types.hs:234:5-41         2302           1    0.0    0.0     0.0    0.0
+         splitLit          Types                          src\Types.hs:(447,5)-(449,70) 2299           1    0.0    0.0     0.0    0.0
+          removeVar        Types                          src\Types.hs:(437,1)-(439,42) 2310           2    0.0    0.0     0.0    0.0
+           isV             Types                          src\Types.hs:375:1-37         2312           3    0.0    0.0     0.0    0.0
+            isL            Types                          src\Types.hs:442:5-43         2325           2    0.0    0.0     0.0    0.0
+            notL           Types                          src\Types.hs:443:5-45         2313           1    0.0    0.0     0.0    0.0
+           <?>             Types                          src\Types.hs:(414,5)-(418,28) 2324           1    0.0    0.0     0.0    0.0
+            <?>.both       Types                          src\Types.hs:418:9-28         2326           1    0.0    0.0     0.0    0.0
+             <?>           Types                          src\Types.hs:405:5-68         2327           1    0.0    0.0     0.0    0.0
+           ==>             Types                          src\Types.hs:(426,5)-(430,29) 2333           1    0.0    0.0     0.0    0.0
+            ==>.f          Types                          src\Types.hs:(428,8)-(430,29) 2334           1    0.0    0.0     0.0    0.0
+          <?>              Types                          src\Types.hs:(414,5)-(418,28) 2311           1    0.0    0.0     0.0    0.0
+           <?>.both        Types                          src\Types.hs:418:9-28         2314           1    0.0    0.0     0.0    0.0
+            <?>            Types                          src\Types.hs:405:5-68         2315           1    0.0    0.0     0.0    0.0
+          evalVar          Types                          src\Types.hs:450:5-41         2300           1    0.0    0.0     0.0    0.0
+           ??              Types                          src\Types.hs:412:1-30         2301           1    0.0    0.0     0.0    0.0
+       kOp.go.(...)        Types                          src\Types.hs:(141,9)-(143,29) 2288           2    0.0    0.0     0.0    0.0
+        split              Types                          src\Types.hs:(225,1)-(235,17) 2352           1    0.0    0.0     0.0    0.0
+         gAnd              Types                          src\Types.hs:(502,1)-(518,19) 2369           2    0.0    0.0     0.0    0.0
+          addEnv           Types                          src\Types.hs:(492,1)-(499,34) 2377           2    0.0    0.0     0.0    0.0
+           ==              Types                          src\Types.hs:410:13-14        2378           1    0.0    0.0     0.0    0.0
+          gAnd.flatten     Types                          src\Types.hs:(517,5)-(518,19) 2376           2    0.0    0.0     0.0    0.0
+          gAnd.flattenEnv  Types                          src\Types.hs:514:5-66         2370           2    0.0    0.0     0.0    0.0
+           gAnd.merge1     Types                          src\Types.hs:(515,5)-(516,31) 2371           1    0.0    0.0     0.0    0.0
+            <?>            Types                          src\Types.hs:(414,5)-(418,28) 2372           1    0.0    0.0     0.0    0.0
+          ==               Types                          src\Types.hs:128:13-14        2381           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:233:5-66         2361           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:234:5-41         2357           1    0.0    0.0     0.0    0.0
+          splitMap         Types                          src\Types.hs:(181,1)-(182,25) 2358           1    0.0    0.0     0.0    0.0
+           splitMap.ls'    Types                          src\Types.hs:182:11-25        2359           1    0.0    0.0     0.0    0.0
+         split.invariant   Types                          src\Types.hs:233:5-66         2362           1    0.0    0.0     0.0    0.0
+         split.rel         Types                          src\Types.hs:233:5-66         2360           1    0.0    0.0     0.0    0.0
+         split.relL        Types                          src\Types.hs:234:5-41         2379           1    0.0    0.0     0.0    0.0
+         split.relR        Types                          src\Types.hs:234:5-41         2356           1    0.0    0.0     0.0    0.0
+         splitLit          Types                          src\Types.hs:(447,5)-(449,70) 2353           1    0.0    0.0     0.0    0.0
+          removeVar        Types                          src\Types.hs:(437,1)-(439,42) 2363           2    0.0    0.0     0.0    0.0
+           isV             Types                          src\Types.hs:375:1-37         2365           3    0.0    0.0     0.0    0.0
+            notL           Types                          src\Types.hs:443:5-45         2366           2    0.0    0.0     0.0    0.0
+            isL            Types                          src\Types.hs:442:5-43         2380           1    0.0    0.0     0.0    0.0
+           <?>             Types                          src\Types.hs:(414,5)-(418,28) 2364           2    0.0    0.0     0.0    0.0
+            <?>.both       Types                          src\Types.hs:418:9-28         2367           2    0.0    0.0     0.0    0.0
+             <?>           Types                          src\Types.hs:405:5-68         2368           2    0.0    0.0     0.0    0.0
+           ==>             Types                          src\Types.hs:(426,5)-(430,29) 2373           1    0.0    0.0     0.0    0.0
+            ==>.f          Types                          src\Types.hs:(428,8)-(430,29) 2374           1    0.0    0.0     0.0    0.0
+          evalVar          Types                          src\Types.hs:450:5-41         2354           1    0.0    0.0     0.0    0.0
+           ??              Types                          src\Types.hs:412:1-30         2355           1    0.0    0.0     0.0    0.0
+       kOp.go.lv           Types                          src\Types.hs:148:9-20         2289           2    0.0    0.0     0.0    0.0
+        varOf              Types                          src\Types.hs:(176,1)-(178,14) 2290           2    0.0    0.0     0.0    0.0
+         maxSplitVar       Types                          src\Types.hs:(444,5)-(446,25) 2291           2    0.0    0.0     0.0    0.0
+       kOp.go.lx           Types                          src\Types.hs:(141,9)-(143,29) 2321           2    0.0    0.0     0.0    0.0
+       kOp.go.ly           Types                          src\Types.hs:(141,9)-(143,29) 2287           2    0.0    0.0     0.0    0.0
+       kOp.go.rv           Types                          src\Types.hs:149:9-20         2293           2    0.0    0.0     0.0    0.0
+        varOf              Types                          src\Types.hs:(176,1)-(178,14) 2294           2    0.0    0.0     0.0    0.0
+         maxSplitVar       Types                          src\Types.hs:(444,5)-(446,25) 2295           2    0.0    0.0     0.0    0.0
+       kOp.go.rx           Types                          src\Types.hs:(144,9)-(146,29) 2322           2    0.0    0.0     0.0    0.0
+       kOp.go.ry           Types                          src\Types.hs:(144,9)-(146,29) 2296           2    0.0    0.0     0.0    0.0
+       kOp.go.v            Types                          src\Types.hs:147:9-21         2292           2    0.0    0.0     0.0    0.0
+    kOr                    Types                          src\Types.hs:(161,1)-(169,22) 2270           0    0.0    0.0    99.2  100.0
+     kOp                   Types                          src\Types.hs:(133,1)-(149,20) 2271           0    0.0    0.0    99.2  100.0
+      kOp.go               Types                          src\Types.hs:(137,5)-(149,20) 2272           3    0.0    0.0    99.2  100.0
+       iff                 Types                          src\Types.hs:(456,1)-(473,20) 2459     9885829    8.5    0.0    99.2  100.0
+        cofactor           Types                          src\Types.hs:(476,1)-(481,26) 2463    19771656    2.4    0.0     2.4    0.0
+        ==                 Types                          src\Types.hs:128:13-14        2460     9885829    2.4    0.0    23.0   28.6
+         ==                Types                          src\Types.hs:410:13-14        2461     9885829   18.1   28.6    20.6   28.6
+          ==               Types                          src\Types.hs:395:13-14        2462           0    2.4    0.0     2.4    0.0
+        ==                 Types                          src\Types.hs:81:13-14         2470     9885828    0.0    0.0     0.0    0.0
+        iff.inters         Types                          src\Types.hs:472:5-33         2471     9885828    0.0    0.0     0.0    0.0
+        iff.merged         Types                          src\Types.hs:470:5-23         2464     9885828    0.0    0.0    11.3   20.0
+         <||>              Types                          src\Types.hs:(378,3)-(384,26) 2465     9885828   10.5   20.0    11.3   20.0
+          <||>.\           Types                          src\Types.hs:378:121-135      2466     9885828    0.8    0.0     0.8    0.0
+           <||>            Types                          src\Types.hs:407:5-65         2467     9885828    0.0    0.0     0.0    0.0
+           <||>.wrap       Types                          src\Types.hs:(380,7)-(382,33) 2468     9885828    0.0    0.0     0.0    0.0
+          <||>.toIs        Types                          src\Types.hs:(383,7)-(384,26) 2469     9885828    0.0    0.0     0.0    0.0
+        iff.mkOut          Types                          src\Types.hs:471:5-102        2472     9885828    8.9   34.3    54.0   51.4
+         ==>               Types                          src\Types.hs:(426,5)-(430,29) 2480    19771656    5.2    8.6     5.2    8.6
+         gAndS             Types                          src\Types.hs:487:1-29         2473    19771656    4.0    0.0    39.9    8.6
+          addEnv           Types                          src\Types.hs:(492,1)-(499,34) 2478    19771656    4.8    8.6    12.5    8.6
+           ==              Types                          src\Types.hs:410:13-14        2479    19771656    7.7    0.0     7.7    0.0
+          gAnd             Types                          src\Types.hs:(502,1)-(518,19) 2474    19771656    6.5    0.0    23.4    0.0
+           addEnv          Types                          src\Types.hs:(492,1)-(499,34) 2476    19771656    4.8    0.0    16.9    0.0
+            ==             Types                          src\Types.hs:410:13-14        2477    19771656   12.1    0.0    12.1    0.0
+           gAnd.flattenEnv Types                          src\Types.hs:514:5-66         2475    19771656    0.0    0.0     0.0    0.0
+       kOr.step            Types                          src\Types.hs:(163,5)-(169,22) 2273           3    0.0    0.0     0.0    0.0
+        ==                 Types                          src\Types.hs:128:13-14        2383           1    0.0    0.0     0.0    0.0
+         ==                Types                          src\Types.hs:410:13-14        2384           1    0.0    0.0     0.0    0.0
+       kOp.go.(...)        Types                          src\Types.hs:(144,9)-(146,29) 2418           1    0.0    0.0     0.0    0.0
+        split              Types                          src\Types.hs:(225,1)-(235,17) 2419           1    0.0    0.0     0.0    0.0
+         gAnd              Types                          src\Types.hs:(502,1)-(518,19) 2436           2    0.0    0.0     0.0    0.0
+          addEnv           Types                          src\Types.hs:(492,1)-(499,34) 2444           2    0.0    0.0     0.0    0.0
+           ==              Types                          src\Types.hs:410:13-14        2445           1    0.0    0.0     0.0    0.0
+          gAnd.flatten     Types                          src\Types.hs:(517,5)-(518,19) 2443           2    0.0    0.0     0.0    0.0
+          gAnd.flattenEnv  Types                          src\Types.hs:514:5-66         2437           2    0.0    0.0     0.0    0.0
+           gAnd.merge1     Types                          src\Types.hs:(515,5)-(516,31) 2438           1    0.0    0.0     0.0    0.0
+            <?>            Types                          src\Types.hs:(414,5)-(418,28) 2439           1    0.0    0.0     0.0    0.0
+          ==               Types                          src\Types.hs:128:13-14        2458           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:233:5-66         2428           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:234:5-41         2424           1    0.0    0.0     0.0    0.0
+          splitMap         Types                          src\Types.hs:(181,1)-(182,25) 2425           1    0.0    0.0     0.0    0.0
+           splitMap.ls'    Types                          src\Types.hs:182:11-25        2426           1    0.0    0.0     0.0    0.0
+         split.invariant   Types                          src\Types.hs:233:5-66         2429           1    0.0    0.0     0.0    0.0
+         split.rel         Types                          src\Types.hs:233:5-66         2427           1    0.0    0.0     0.0    0.0
+         split.relL        Types                          src\Types.hs:234:5-41         2456           1    0.0    0.0     0.0    0.0
+         split.relR        Types                          src\Types.hs:234:5-41         2423           1    0.0    0.0     0.0    0.0
+         splitLit          Types                          src\Types.hs:(447,5)-(449,70) 2420           1    0.0    0.0     0.0    0.0
+          removeVar        Types                          src\Types.hs:(437,1)-(439,42) 2430           2    0.0    0.0     0.0    0.0
+           isV             Types                          src\Types.hs:375:1-37         2432           3    0.0    0.0     0.0    0.0
+            notL           Types                          src\Types.hs:443:5-45         2433           2    0.0    0.0     0.0    0.0
+            isL            Types                          src\Types.hs:442:5-43         2457           1    0.0    0.0     0.0    0.0
+           <?>             Types                          src\Types.hs:(414,5)-(418,28) 2431           2    0.0    0.0     0.0    0.0
+            <?>.both       Types                          src\Types.hs:418:9-28         2434           2    0.0    0.0     0.0    0.0
+             <?>           Types                          src\Types.hs:405:5-68         2435           2    0.0    0.0     0.0    0.0
+           ==>             Types                          src\Types.hs:(426,5)-(430,29) 2440           1    0.0    0.0     0.0    0.0
+            ==>.f          Types                          src\Types.hs:(428,8)-(430,29) 2441           1    0.0    0.0     0.0    0.0
+          evalVar          Types                          src\Types.hs:450:5-41         2421           1    0.0    0.0     0.0    0.0
+           ??              Types                          src\Types.hs:412:1-30         2422           1    0.0    0.0     0.0    0.0
+       kOp.go.(...)        Types                          src\Types.hs:(141,9)-(143,29) 2387           1    0.0    0.0     0.0    0.0
+        split              Types                          src\Types.hs:(225,1)-(235,17) 2395           1    0.0    0.0     0.0    0.0
+         gAnd              Types                          src\Types.hs:(502,1)-(518,19) 2412           2    0.0    0.0     0.0    0.0
+          addEnv           Types                          src\Types.hs:(492,1)-(499,34) 2416           2    0.0    0.0     0.0    0.0
+           ==              Types                          src\Types.hs:410:13-14        2454           1    0.0    0.0     0.0    0.0
+          gAnd.flatten     Types                          src\Types.hs:(517,5)-(518,19) 2414           2    0.0    0.0     0.0    0.0
+          gAnd.flattenEnv  Types                          src\Types.hs:514:5-66         2413           2    0.0    0.0     0.0    0.0
+           gAnd.merge1     Types                          src\Types.hs:(515,5)-(516,31) 2449           1    0.0    0.0     0.0    0.0
+            <?>            Types                          src\Types.hs:(414,5)-(418,28) 2450           1    0.0    0.0     0.0    0.0
+          ==               Types                          src\Types.hs:128:13-14        2415           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:233:5-66         2404           1    0.0    0.0     0.0    0.0
+         split.(...)       Types                          src\Types.hs:234:5-41         2400           1    0.0    0.0     0.0    0.0
+          splitMap         Types                          src\Types.hs:(181,1)-(182,25) 2401           1    0.0    0.0     0.0    0.0
+           splitMap.ls'    Types                          src\Types.hs:182:11-25        2402           1    0.0    0.0     0.0    0.0
+         split.invariant   Types                          src\Types.hs:233:5-66         2405           1    0.0    0.0     0.0    0.0
+         split.rel         Types                          src\Types.hs:233:5-66         2403           1    0.0    0.0     0.0    0.0
+         split.relL        Types                          src\Types.hs:234:5-41         2447           1    0.0    0.0     0.0    0.0
+         split.relR        Types                          src\Types.hs:234:5-41         2399           1    0.0    0.0     0.0    0.0
+         splitLit          Types                          src\Types.hs:(447,5)-(449,70) 2396           1    0.0    0.0     0.0    0.0
+          removeVar        Types                          src\Types.hs:(437,1)-(439,42) 2406           2    0.0    0.0     0.0    0.0
+           isV             Types                          src\Types.hs:375:1-37         2408           3    0.0    0.0     0.0    0.0
+            isL            Types                          src\Types.hs:442:5-43         2448           2    0.0    0.0     0.0    0.0
+            notL           Types                          src\Types.hs:443:5-45         2409           1    0.0    0.0     0.0    0.0
+           <?>             Types                          src\Types.hs:(414,5)-(418,28) 2407           2    0.0    0.0     0.0    0.0
+            <?>.both       Types                          src\Types.hs:418:9-28         2410           2    0.0    0.0     0.0    0.0
+             <?>           Types                          src\Types.hs:405:5-68         2411           2    0.0    0.0     0.0    0.0
+           ==>             Types                          src\Types.hs:(426,5)-(430,29) 2451           1    0.0    0.0     0.0    0.0
+            ==>.f          Types                          src\Types.hs:(428,8)-(430,29) 2452           1    0.0    0.0     0.0    0.0
+          evalVar          Types                          src\Types.hs:450:5-41         2397           1    0.0    0.0     0.0    0.0
+           ??              Types                          src\Types.hs:412:1-30         2398           1    0.0    0.0     0.0    0.0
+       kOp.go.lv           Types                          src\Types.hs:148:9-20         2388           1    0.0    0.0     0.0    0.0
+        varOf              Types                          src\Types.hs:(176,1)-(178,14) 2389           1    0.0    0.0     0.0    0.0
+         maxSplitVar       Types                          src\Types.hs:(444,5)-(446,25) 2390           1    0.0    0.0     0.0    0.0
+       kOp.go.lx           Types                          src\Types.hs:(141,9)-(143,29) 2446           1    0.0    0.0     0.0    0.0
+       kOp.go.ly           Types                          src\Types.hs:(141,9)-(143,29) 2386           1    0.0    0.0     0.0    0.0
+       kOp.go.rv           Types                          src\Types.hs:149:9-20         2392           1    0.0    0.0     0.0    0.0
+        varOf              Types                          src\Types.hs:(176,1)-(178,14) 2393           1    0.0    0.0     0.0    0.0
+         maxSplitVar       Types                          src\Types.hs:(444,5)-(446,25) 2394           1    0.0    0.0     0.0    0.0
+       kOp.go.rx           Types                          src\Types.hs:(144,9)-(146,29) 2455           1    0.0    0.0     0.0    0.0
+       kOp.go.ry           Types                          src\Types.hs:(144,9)-(146,29) 2417           1    0.0    0.0     0.0    0.0
+       kOp.go.v            Types                          src\Types.hs:147:9-21         2391           1    0.0    0.0     0.0    0.0
+ CAF:q                     Types                          src\Types.hs:611:1            1185           0    0.0    0.0     0.0    0.0
+  q                        Types                          src\Types.hs:611:1-30         2274           1    0.0    0.0     0.0    0.0
+ CAF:r                     Types                          src\Types.hs:613:1            1184           0    0.0    0.0     0.0    0.0
+  r                        Types                          src\Types.hs:613:1-44         2350           1    0.0    0.0     0.0    0.0
+ CAF:someFunc1             Lib                            <no location info>            1165           0    0.0    0.0     0.0    0.0
+  someFunc                 Lib                            src\Lib.hs:7:1-21             2259           1    0.0    0.0     0.0    0.0
+ CAF:t                     Types                          src\Types.hs:615:1            1186           0    0.0    0.0     0.0    0.0
+  t                        Types                          src\Types.hs:615:1-11         2267           1    0.0    0.0     0.0    0.0
+ main                      Types                          src\Types.hs:30:1-27          2261           0    0.0    0.0     0.0    0.0

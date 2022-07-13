@@ -5,6 +5,8 @@ import GHC.Generics (Generic)
 data UF = UF (M.IntMap Int) Int
   deriving (Eq, Ord, Show, Generic)
 
+empty :: UF
+empty = UF mempty 0
 genId :: UF -> (UF, Int)
 genId (UF m i) = (UF m (i+1), i)
 

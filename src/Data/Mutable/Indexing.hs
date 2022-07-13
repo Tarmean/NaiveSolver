@@ -3,7 +3,6 @@
 {-# LANGUAGE LambdaCase #-}
 module Data.Mutable.Indexing where
 import Data.Mutable.Lens
-import Data.Functor.Compose
 import Control.Lens
 import qualified Data.Vector.Storable as IS
 import Control.Monad.Primitive
@@ -19,26 +18,21 @@ import Data.Mutable.Distributive
 
 
 ixLens
-    :: (Monad f, Distributes f g)
-    => (v -> ix -> f a)
-    -> (v -> ix -> a -> f ())
+    :: (JoinL m g, JoinR m g, Monad m)
+    => (v -> ix -> m a)
+    -> (v -> ix -> a -> m ())
     -> ix
-    -> (a -> Compose f g a) -> v -> Compose f g ()
-ixLens tRead tWrite = fid $ \i f m ->
-    Compose $ do
-      a <- tRead m i
-      fa <- getCompose (f a)
-      traverseD (tWrite m i) fa
-  where fid = id
+    -> (a -> g a) -> v -> g ()
+ixLens tRead tWrite i = mlens (`tWrite` i) (`tRead` i)
 
 class ValidateIdx v where
   validateIdx :: Index v -> v -> Bool
 class IxM m v where
-  tryIxM :: Applicative m => Index v -> LValTraversal m v (IxValue v)
-  default tryIxM :: (ValidateIdx v, Applicative m) => Index v -> LValTraversal m v (IxValue v)
-  tryIxM idx = (filtered (validateIdx idx) .$ uncheckedIxM idx)
-  ixM :: Index v -> LValLens m v (IxValue v)
-  uncheckedIxM :: Index v -> LValLens m v (IxValue v)
+  tryIxM :: (Applicative f, HasMonad m f) => Index v -> LValLensLike f v (IxValue v)
+  default tryIxM :: (Applicative f, HasMonad m f, ValidateIdx v) => Index v -> LValLensLike f v (IxValue v)
+  tryIxM idx = (filtered (validateIdx idx) .$ uncheckedIxM @m idx)
+  ixM :: (HasMonad m f) => Index v -> LValLensLike f v (IxValue v)
+  uncheckedIxM :: (HasMonad m f) => Index v -> LValLensLike f v (IxValue v)
   uncheckedIxM = ixM
 type instance Index (IS.MVector n a) = Int
 type instance IxValue (IS.MVector n a) = a
@@ -71,33 +65,20 @@ type instance Index (A.PrimArray a) = Int
 
 
 
-
 type instance Index (HT.Dictionary s ks k vs v) = k
 type instance IxValue (HT.Dictionary s ks k vs v) = v
 
 instance (Hashable k, V.MVector vs v, V.MVector ks k, PrimMonad m, s ~ PrimState m) => IxM m (HT.Dictionary s ks k vs v) where
-   tryIxM k f s = Compose $ do
-       HT.lookup s k >>= \case
-           Nothing -> pure (pure ())
-           Just v -> do
-              fv <- getCompose $ f v
-              traverseD (HT.insert s k) fv
-   ixM k f s = Compose $ do
-       HT.lookup s k >>= \case
-           Nothing -> error "ixM: key not found"
-           Just v -> do
-              fv <- getCompose $ f v
-              traverseD (HT.insert s k) fv
-
+   tryIxM k = maffine @m (\m -> HT.insert m k) (flip HT.lookup k)
+   ixM k = mlens (\m -> HT.insert m k) (fmap unwrap . flip HT.lookup k)
+     where
+       unwrap (Just a) = a
+       unwrap Nothing = error "ixM: key not found"
 
 class IxM m a => AtM m a where
-    atM :: Distributes m f => Index a -> MLensLike' f m a (Maybe (IxValue a))
+    atM :: HasMonad m f => Index a -> MLensLike' f a (Maybe (IxValue a))
 instance (PrimMonad m, Eq k, Hashable k, s ~ PrimState m, DeleteEntry ks, V.MVector vs v, V.MVector ks k, DeleteEntry vs) => AtM m (HT.Dictionary s ks k vs v) where
-    atM k f s = Compose $ do
-        mo <- HT.lookup s k
-        fa <- getCompose $ f mo
-        let
-          cont Nothing = HT.delete s k
-          cont (Just o) = HT.insert s k o
-        fu <- traverseD cont fa
-        pure $ s <$ fu
+    atM k = mlens setter (flip HT.lookup k)
+      where
+      setter t Nothing = t <$ HT.delete t k
+      setter t (Just o) = t <$ HT.insert t k o

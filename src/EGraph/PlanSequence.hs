@@ -4,7 +4,7 @@
     This is quite a bit like the QuickSI subgraph isomorphism algorithm!
     The output requires some assembly, which is done in EGraph.PlanAssembly
  -}
-module EGraph.PlanSequence (PlanStep(..), greedyMatching) where
+module EGraph.PlanSequence where
 import EGraph.PlanStep
 import qualified Data.Set as S
 import EGraph.Types ( Elem'(argIds) )
@@ -54,7 +54,7 @@ rateStats expr stats = rateIndex + rateLocalFilters + rateExistentialJoins + rat
     rateIndex = scale R{rmin = 1, rmax=3,score=7} prefixCount
     rateLocalFilters = scale R{rmin = 0, rmax=4,score=4} (naiveIndex + countFilters)
     rateExistentialJoins = scale R{rmin = 0, rmax=2,score=2} countExistential
-    rateBranchingFactor = scale R{rmin=2, rmax=4, score= -4} unknownVars
+    rateBranchingFactor = scale R{rmin=1, rmax=4, score= -8} unknownVars
 
 data Range = R { rmin :: Double, rmax :: Double, score :: Double }
 scale :: Integral a => Range -> a -> Double
@@ -63,9 +63,4 @@ scale r v
   | fromIntegral v >= r.rmax = r.score
   | otherwise = (fromIntegral v - r.rmin) / (r.rmax - r.rmin) * r.score
 
-countInfix :: S.Set ArgPos -> Int
-countInfix s = go 0
-  where
-   go idx
-     | S.member idx s = go (idx+1)
-     | otherwise = idx
+

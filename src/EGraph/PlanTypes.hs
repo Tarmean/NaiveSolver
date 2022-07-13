@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-missing-methods #-}
 module EGraph.PlanTypes (module EGraph.PlanTypes, Symbol(..)) where
 import GHC.Generics
 import EGraph.Types
@@ -10,15 +11,31 @@ type ArgPos = Int
 newtype ExprNodeId = EId Int
   deriving (Eq, Ord, Show, Generic)
 type PElem = Elem' ExprNodeId
+
+data VOP = V VarId | P Pat
+  deriving Show
+newtype Pat = Pat (Elem' VOP)
+  deriving Show
+instance Num VOP where
+    fromInteger a = V (VarId $ fromInteger a)
+pap :: Int -> [VOP] -> Pat
+pap n args = (Pat $ Elem (Symbol n) args)
+ppap :: Int -> [VOP] -> VOP
+ppap n args = P (pap n args)
+
+
+
 newtype VarId = VarId Int
  deriving (Eq, Ord, Show)
 
 data Program = Program {ops :: Seq.Seq VM, tempCount :: Int, outCount :: Int }
+  deriving (Eq, Ord, Show, Generic)
 data PGraph = PGraph {
-    definitions :: M.Map ExprNodeId (Either VarId PElem),
-    freeVars :: M.Map ExprNodeId (S.Set ExprNodeId)
+    definitions :: M.Map ExprNodeId (Either VarId PElem)
+    -- freeVars :: M.Map ExprNodeId (S.Set ExprNodeId)
  }
   deriving (Eq, Ord, Show, Generic)
+
 
 data PlanStep = PlanStep { stats :: Stats, node :: ExprNodeId, expr :: PElem }
   deriving (Eq, Ord, Show, Generic)
@@ -55,12 +72,22 @@ data MatchEnv = MEnv {
 } deriving (Eq, Ord, Show, Generic)
 
 -- | We know the class of a node, but *how* did we find out?
-data DiscoverKind = ArgOf { parent :: ExprNodeId, pos :: ArgPos } | CongruenceLookup { unblockedBy :: ExprNodeId }
+data DiscoverKind = ArgOf { self :: ExprNodeId, parent :: ExprNodeId, pos :: ArgPos } | CongruenceLookup { self :: ExprNodeId, unblockedBy :: ExprNodeId } | FreeJoin
   deriving (Eq, Ord, Show, Generic)
 
+countInfix :: S.Set ArgPos -> Int
+countInfix s = go 0
+  where
+   go idx
+     | S.member idx s = go (idx+1)
+     | otherwise = idx
 data Stats = Stats {
     preKnown :: S.Set ArgPos,
     allowsDiscovers :: S.Set ExprNodeId,
-    allowsChecks :: [DiscoverKind],
+    allowsChecks :: S.Set DiscoverKind,
     learned :: Int
 } deriving (Eq, Ord, Show, Generic)
+instance Semigroup Stats where
+    Stats a b c d <> Stats a' b' c' d' = Stats (a <> a') (b <> b') (c <> c')  (d + d')
+instance Monoid Stats where
+    mempty = Stats mempty mempty mempty 0

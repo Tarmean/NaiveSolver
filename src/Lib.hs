@@ -1,6 +1,7 @@
 module Lib
     ( someFunc
     ) where
+import qualified Types
 
 someFunc :: IO ()
-someFunc = putStrLn "someFunc"
+someFunc = Types.main

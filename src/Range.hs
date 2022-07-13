@@ -10,7 +10,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Range where
 import Control.Monad.State ()
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), contains, BoundedLattice(..), top, PContains (compareC))
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), contains, BoundedLattice(..), top, PContains (compareC), LatticeVal (..), getLatticeVal)
 import Control.Applicative ( Applicative(liftA2) )
 import Test.QuickCheck (Testable (property))
 import Data.Maybe (isNothing, isJust)
@@ -146,13 +146,16 @@ instance (Num a, Ord a) => RegularSemigroup (Range a) where
 
 instance (Ord a, Num a) => PLattice (Range a) where
     (<||>) a b
-      | ia && ib = Nothing
-      | ia = Just b
-      | ib = Just a
+      | ia && ib = IsBot
+      | ia = Is b
+      | ib = Is a
       where
         ia = isBot a
         ib = isBot b
-    (<||>) (Range a b) (Range a' b') = Just $ Range (minM a a') (maxM b b')
+    (<||>) (Range a b) (Range a' b') = tryRange (minM a a') (maxM b b')
+      where
+        tryRange Nothing Nothing = IsTop
+        tryRange x y = Is $ Range x y
 
 instance (Num a, Ord a) => BoundedLattice (Range a) where
     bot = Range (Just 1) (Just 0)
@@ -375,9 +378,7 @@ rangeIn _ _ = True
 -- The inner divG only considers the case where the divisor is strictly positive
 divI :: (Integral a) => Range a -> Range a -> Range a
 divI a b = case splitPosNeg b of
-    Just (lb,rb) -> case (negate (divG a (negate lb))) <||> divG a rb of
-        Just o -> o
-        Nothing -> bot
+    Just (lb,rb) -> getLatticeVal $  (negate (divG a (negate lb))) <||> divG a rb
     Nothing 
       | isPos b -> divG a b
       | otherwise -> negate (divG a (negate b))
@@ -426,10 +427,7 @@ instance (Show a, Num a, Ord a) => LiftRange (Range a) (Range a) where
     liftRange :: [Range a] -> Range a
     liftRange [] = bot
     liftRange a = foldl1 step a
-      where
-        step l r = case l <||> r of
-            Nothing -> bot
-            Just l' -> l'
+      where step l r = getLatticeVal $ l <||> r
 mkRange :: x -> Range x
 mkRange x = Range (Just x) (Just x)
 

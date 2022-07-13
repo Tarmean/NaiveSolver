@@ -23,6 +23,4 @@ type Elem = Elem' Id
 
 newtype RExp = RExp (Elem' RExp)
 
-newtype Pat = Pat (Elem' (Either Var Pat))
-  deriving Show
 

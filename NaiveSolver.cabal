@@ -39,6 +39,7 @@ library
       EGraph.Match
       EGraph.Matching
       EGraph.Pending
+      EGraph.Plan
       EGraph.PlanAssembly
       EGraph.PlanSequence
       EGraph.PlanStep
@@ -55,7 +56,9 @@ library
       Optics.Utils
       Propagator
       Range
+      SKI
       Test
+      TestNonempty
       Types
   other-modules:
       Paths_NaiveSolver
