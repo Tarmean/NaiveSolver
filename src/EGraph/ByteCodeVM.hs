@@ -22,6 +22,7 @@ import EGraph.PlanTypes
 import qualified Data.Vector.Unboxed as V
 import Monad.Amb
 import Control.Applicative
+import Debug.Trace (traceM)
 
 
 data NaiveVMState s = NVM { outVec :: VU.MVector s Int, tempVec :: VU.MVector s Int, curMatch :: Match }
@@ -30,14 +31,15 @@ type EvalM m a = AmbT () (StateT (NaiveVMState (PrimState m)) m) a
 
 allMatches :: (MonadEgg m, PrimMonad m) => Program -> (V.Vector Int -> m ()) -> m ()
 allMatches (prog :: Program) k = do
-    outVec <- VU.new prog.outCount
-    tempVec <- VU.new prog.tempCount
-    let emptyState = NVM outVec  tempVec V.empty
+    outVec <- VU.new (prog.outCount+1)
+    tempVec <- VU.new (prog.outCount+prog.tempCount)
+    let emptyState = NVM outVec tempVec V.empty
     flip evalStateT emptyState $ runAmb (mapM_ eval prog.ops) (\_ _ -> use #outVec >>= \v -> lift (V.freeze v >>= k)) (pure ())
 
 writeReg :: (PrimMonad m, MonadEgg m) => Int -> Reg -> EvalM m ()
 writeReg val (Temporary regId) = #tempVec $= \v -> VU.write v regId val
-writeReg val (Output regId) = #outVec $= \v -> VU.write v regId val
+writeReg val (Output regId) = do
+    #outVec $= \v -> VU.write v regId val
 
 -- Invariants:
 -- - Registers are only written once
@@ -56,14 +58,15 @@ eval (Join classReg symbol prefixRegs) = do
     classId <- readReg classReg
     prefix <- loadRegs prefixRegs
     withFuture $ \cont -> do
-        forMatches classId symbol prefix $ \match -> do
+        forMatches Both classId symbol prefix $ \match -> do
             #curMatch .= match
             cont ()
 eval (Startup symbol prefixRegs) = do
     prefix <- loadRegs prefixRegs
     withFuture $ \cont -> do
         forClasses $ \classId -> do
-            forMatches classId symbol prefix $ \match -> do
+            forMatches Both classId symbol prefix $ \match -> do
+                traceM $ "Startup: " <> show match
                 #curMatch .= match
                 cont ()
 eval (HashLookup sym regs out)= do

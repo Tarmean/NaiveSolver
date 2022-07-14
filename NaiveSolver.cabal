@@ -45,6 +45,7 @@ library
       EGraph.PlanStep
       EGraph.PlanTypes
       EGraph.Pure
+      EGraph.SimpleEgg
       EGraph.Storage
       EGraph.Types
       EGraph.UnionFind

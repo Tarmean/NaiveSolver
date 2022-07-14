@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-| Takes plans from EGraph.PlanSequence and generates VM operations
  -}
 module EGraph.PlanAssembly where
@@ -21,11 +22,19 @@ import Data.Generics.Labels ()
 import Control.Lens
 import Optics.Utils
 import GHC.Stack (HasCallStack)
+import Debug.Trace (traceM)
 
 assemble :: MatchEnv -> [PlanStep] -> Program
 assemble env ps = Program out st.nodeUniq st.varUniq
   where
     (out, st) = runState (execWriterT (mapM_ doAssembly ps)) (AssemblyState mempty mempty env.patGraph firstOccs becomeGround 0 0)
+
+    firstOccs = M.fromListWith (<>) [ (node, [(pos, learned)])  | (learned, ArgOf _ node pos) <- M.toList env.knownClass]
+    becomeGround = M.fromListWith (<>) [ (node, S.singleton learned)  | (learned, CongruenceLookup _ node) <- M.toList env.knownClass ]
+assembleDebug :: MatchEnv -> [PlanStep] -> (M.Map ExprNodeId [(ArgPos, ExprNodeId)],M.Map ExprNodeId (S.Set ExprNodeId))
+assembleDebug env ps = (firstOccs, becomeGround)
+  where
+
     firstOccs = M.fromListWith (<>) [ (node, [(pos, learned)])  | (learned, ArgOf _ node pos) <- M.toList env.knownClass]
     becomeGround = M.fromListWith (<>) [ (node, S.singleton learned)  | (learned, CongruenceLookup _ node) <- M.toList env.knownClass ]
 
@@ -48,8 +57,10 @@ newReg :: ExprNodeId -> M Reg
 newReg eid = do
     out <- use (#pgraph . #definitions . at eid) >>= \case
        Nothing -> error "Invalid pgraph"
-       Just (Left _) -> fmap Output (#varUniq <%= succ)
-       Just (Right _) -> fmap Temporary (#nodeUniq <%= succ)
+       Just (Left (VarId l)) -> do
+           #varUniq %= max l
+           pure $ Output l
+       Just (Right _) -> fmap Temporary (#nodeUniq <<%= succ)
     #regMap %= M.insert eid out
     pure out
 
@@ -92,6 +103,7 @@ doAssembly pstep = do
    tellJoin pstep
    -- store all values we haven't seen before into output
    overM_ (#firstOccs . at pstep.node . non mempty . each) $ \(argPos, node) -> do
+     -- traceM $ "First occurence of " <> show node <> " at " <> show argPos <> "  -- " <> show pstep
      reg <- regFor node
      loadWith node (CopyValue argPos reg)
    -- do all filtering that didn't happen via joins

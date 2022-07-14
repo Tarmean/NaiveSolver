@@ -40,6 +40,7 @@ dependencies:
 - generic-lens
 - profunctors
 - distributive
+- pretty-simple
 library:
   source-dirs: src
 ghc-options:

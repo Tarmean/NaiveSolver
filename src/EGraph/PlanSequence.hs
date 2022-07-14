@@ -18,7 +18,7 @@ greedyMatching :: PGraph -> ([PlanStep], MatchEnv)
 greedyMatching pgraph = go mempty (makeMatchEnv pgraph)
   where
     go acc env = case collectSteps env of
-      [] -> (acc, env)
+      [] -> (reverse acc, env)
       candidates -> let ((pid, stats), env') = maximumBy (comparing rate1) candidates in go (PlanStep stats pid (elemOf pid) : acc) env'
     elemOf pid 
       | Right out <- pgraph.definitions M.! pid = out

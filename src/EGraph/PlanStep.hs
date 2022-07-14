@@ -21,7 +21,7 @@ module EGraph.PlanStep (collectSteps, MatchEnv(..), DiscoverKind(..), Stats(..))
 import EGraph.PlanTypes
 
 import Control.Monad.State.Strict
-    ( forM_, gets, MonadState(state), StateT(runStateT) )
+    ( forM_, gets, MonadState(state, get), StateT(runStateT) )
 import Control.Applicative ( asum )
 
 import Data.Generics.Labels ()
@@ -102,16 +102,15 @@ getElem i =
 markArgKnown :: ExprNodeId -> DiscoverKind -> M ()
 markArgKnown node potentialReason = do
     known <- gets $ has (#knownClass . ix node)
-    -- traceM $ "markArgKnown " <> show node <> " " <> show potentialReason <> " " <> show known
     if known
     then tellCheck potentialReason
     else do
+      tell mempty { allowsDiscovers = S.singleton node }
       tellReason node potentialReason
       tell mempty { learned = 1 }
 markJoin :: ExprNodeId -> M ()
 markJoin node = do
     known <- gets $ has (#knownClass . ix node)
-    -- traceM $ "markJoin " <> show node <> " " <>  show known
     when (not known) $ do
       tellReason node FreeJoin
       tell mempty { learned = 1 }
@@ -128,12 +127,12 @@ newGroundNodes written = zoom #nonGroundNodes $ state (markKnown written)
 processElem :: ExprNodeId -> M ()
 processElem pid = do
    p <- getElem pid
+   -- states <- get
    tellPreKnown p
    markJoin pid
    forM_ (zip [0..] p.argIds) $ \(idx, arg) -> markArgKnown arg (ArgOf arg pid idx)
    newGround <- S.delete pid <$> newGroundNodes (pid : p.argIds)
    
-   -- traceM $ "new ground$ "<> show newGround <> " p " <> show p
    forM_ newGround $ \ground -> do
        whenM (isExpr ground) $ markArgKnown ground (CongruenceLookup ground pid)
    tell mempty { allowsDiscovers = newGround }
