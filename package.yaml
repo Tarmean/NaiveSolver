@@ -41,10 +41,15 @@ dependencies:
 - profunctors
 - distributive
 - pretty-simple
+- express
+- speculate
+- extrapolate
+- leancheck
 library:
   source-dirs: src
 ghc-options:
     - -Wall -Wunused-dependencies
+    - -O2
 default-extensions: GHC2021
 
 executables:
@@ -52,6 +57,7 @@ executables:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
+    - -O2
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N

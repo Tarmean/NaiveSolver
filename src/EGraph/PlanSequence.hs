@@ -13,9 +13,10 @@ import Data.List (maximumBy)
 import Data.Ord (comparing)
 import EGraph.Pending (mkPending)
 import EGraph.PlanTypes
+import Data.Maybe (fromMaybe)
 
-greedyMatching :: PGraph -> ([PlanStep], MatchEnv)
-greedyMatching pgraph = go mempty (makeMatchEnv pgraph)
+greedyMatching :: M.Map ExprNodeId Double -> PGraph -> ([PlanStep], MatchEnv)
+greedyMatching joinCost pgraph = go mempty (makeMatchEnv pgraph)
   where
     go acc env = case collectSteps env of
       [] -> (reverse acc, env)
@@ -23,7 +24,7 @@ greedyMatching pgraph = go mempty (makeMatchEnv pgraph)
     elemOf pid 
       | Right out <- pgraph.definitions M.! pid = out
       | otherwise = undefined
-    rate1 ((pid, stats), env) = rateStats pelem stats
+    rate1 ((pid, stats), env) = rateStats pelem stats (joinCost M.!? pid)
       where 
         pelem = case env.patGraph.definitions M.! pid of
           Left _ -> error "collectSteps cannot yield leaf notes"
@@ -36,8 +37,8 @@ makeMatchEnv pgraph = MEnv innerNodes mempty pending pgraph
     pending = mkPending $ M.fromList [(pid, S.fromList expr.argIds) | (pid, Right expr) <- M.toList pgraph.definitions]
 
 
-rateStats :: PElem -> Stats -> Double
-rateStats expr stats = rateIndex + rateLocalFilters + rateExistentialJoins + rateBranchingFactor
+rateStats :: PElem -> Stats -> Maybe Double -> Double
+rateStats expr stats joinCost = rateIndex + rateLocalFilters + rateExistentialJoins + rateBranchingFactor + fromMaybe 0 joinCost
   where
     argCount = length expr.argIds
 

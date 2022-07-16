@@ -33,6 +33,8 @@ import Prelude hiding (length)
 import Data.Mutable.Distributive (HasMonad)
 import Data.Foldable (traverse_)
 import Data.List (unfoldr)
+import Debug.Trace (traceM)
+import GHC.Stack (HasCallStack)
 
 type instance Index (Grow v s a) = Int
 type instance IxValue (Grow v s a) = a
@@ -102,7 +104,7 @@ append a = toState $ \m -> do
     m <- unsafeGrowCap 1 m
     V.write m (V.length m - 1) a
     pure m
-appendSlice :: forall m v a. (MonadState (Grow (VN.Mutable v) (PrimState m) a) m, PrimMonad m, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a)) => v a -> m ()
+appendSlice :: forall m v a. (MonadState (Grow (VN.Mutable v) (PrimState m) a) m, PrimMonad m, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a), Show (v a)) => v a -> m ()
 appendSlice v = do
   v' <- VN.unsafeThaw v
   appendVec v'
@@ -111,19 +113,19 @@ getSlice :: ( PrimMonad m, V.MVector (VN.Mutable v) a, VN.Vector v a) => Int -> 
 getSlice l r (Grow v) = VN.freeze (V.slice l r v)
 
 newtype Source a = Source a
-appendVec :: (MonadState (Grow v (PrimState m) a) m, V.MVector v a, PrimMonad m, Capacity (v (PrimState m) a)) => v (PrimState m) a -> m ()
+appendVec :: (Show (v a), VN.Vector v a, MonadState (Grow (VN.Mutable v) (PrimState m) a) m, V.MVector (VN.Mutable v) a, PrimMonad m, Capacity (VN.Mutable v (PrimState m) a)) => VN.Mutable v (PrimState m) a -> m ()
 appendVec r = do
     l <- get
     let lLen = V.length l
         rLen = V.length r
         totalLen = lLen + rLen
-    Grow l <- ensureCap rLen l
-    let l' = V.unsafeSlice lLen totalLen l
-    V.unsafeCopy l' r
+    Grow l <- ensureCap totalLen l
+    let l' = V.unsafeSlice lLen rLen l
+    V.copy l' r
     put $ Grow $ V.unsafeSlice 0 totalLen l
 
 
-pop :: (PrimMonad m, MonadState (Grow (VN.Mutable v) (PrimState m) a) m, V.MVector (VN.Mutable v) a, VN.Vector v a) => Int -> m (Maybe (v a))
+pop :: (PrimMonad m, MonadState (Grow (VN.Mutable v) (PrimState m) a) m, V.MVector (VN.Mutable v) a, VN.Vector v a, Capacity (VN.Mutable v (PrimState m) a)) => Int -> m (Maybe (v a))
 pop i = do
     l <- gets length
     if l < i
@@ -137,7 +139,7 @@ freeze :: (PrimMonad m, VN.Vector v a) => Grow (VN.Mutable v) (PrimState m) a ->
 freeze (Grow v) = VN.freeze v
 
 unsafeFreeze :: (PrimMonad m, VN.Vector v a) => Grow (VN.Mutable v) (PrimState m) a -> m (v a)
-unsafeFreeze (Grow v) = VN.unsafeFreeze v
+unsafeFreeze (Grow v) = VN.freeze v
 
 fromList :: (PrimMonad f, VN.Vector v a) => [a] -> f (Grow (VN.Mutable v) (PrimState f) a)
 fromList ls = fmap Grow $ VN.thaw $ VN.fromList ls
@@ -145,14 +147,14 @@ instance (PrimMonad m, s~PrimState m) => EachP m (Grow IB.MVector s a) where
   eachP f (Grow t) = eachP f t
 
 type MonadGrow r m a = (ValidateIdx (r (PrimState m) a), IxM m (r (PrimState m) a), Index (r (PrimState m) a) ~ Int, IxValue (r (PrimState m) a) ~ a, MonadState (Grow r (PrimState m) a) m, PrimMonad m, V.MVector r a)
-dedup :: (Eq a, MonadGrow r m a) => m ()
+dedup :: (Eq a, MonadGrow r m a, Capacity (r (PrimState m) a)) => m ()
 dedup = do
     l <- gets (V.length . unGrow)
     when (l >= 1) $ do
         s0 <- useP (ixM 0)
         go 0 s0 1 l
   where
-    go :: (Eq a, MonadGrow r m a) => Int -> a -> Int -> Int -> m ()
+    go :: (Eq a, MonadGrow r m a, Capacity (r (PrimState m) a)) => Int -> a -> Int -> Int -> m ()
     go frontier frontierVal candidate cap
       | candidate == cap = id &-> pure . capGrowable frontier
       | otherwise = do
@@ -164,8 +166,10 @@ dedup = do
           mut (ixM frontier') &= candidateVal
           go (frontier+1) candidateVal (candidate+1) cap
 
-capGrowable :: V.MVector v a => Int -> Grow v s a -> Grow v s a
-capGrowable i (Grow v) = Grow $ V.unsafeSlice 0 (i+1) v
+capGrowable :: (HasCallStack, V.MVector v a, Capacity (v s a)) => Int -> Grow v s a -> Grow v s a
+capGrowable i (Grow v) 
+  | i+1 >= getCapacity v = error "Invalid capGrowable"
+  | otherwise = Grow $ V.unsafeSlice 0 (i+1) v
 
 length :: V.MVector v a => Grow v s a -> Int
 length (Grow v)= V.length v

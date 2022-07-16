@@ -17,7 +17,6 @@ import Data.Coerce ( coerce, Coercible )
 import Data.Primitive ( sizeofMutableByteArray, sizeOf )
 import Data.Mutable.Indexing
 import qualified Data.Vector.Generic.Mutable as VGM
-import Unsafe.Coerce (unsafeCoerce)
 
 type family ValOf v (xs :: [Nat]) s a where
   ValOf _ '[] _ a  = a

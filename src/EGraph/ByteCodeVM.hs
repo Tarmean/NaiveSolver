@@ -25,18 +25,21 @@ import Control.Applicative
 import Debug.Trace (traceM)
 
 
-data NaiveVMState s = NVM { outVec :: VU.MVector s Int, tempVec :: VU.MVector s Int, curMatch :: Match }
+data NaiveVMState s = NVM { outVec :: VU.MVector s Int, tempVec :: VU.MVector s Int, curMatch :: Match}
   deriving (Generic)
 type EvalM m a = AmbT () (StateT (NaiveVMState (PrimState m)) m) a
 
-allMatches :: (MonadEgg m, PrimMonad m) => Program -> (V.Vector Int -> m ()) -> m ()
-allMatches (prog :: Program) k = do
+allMatches :: (MonadEgg m sym, PrimMonad m) => Program sym -> (V.Vector Int -> m ()) -> m ()
+allMatches (prog :: Program sym) k = do
     outVec <- VU.new (prog.outCount+1)
     tempVec <- VU.new (prog.outCount+prog.tempCount)
     let emptyState = NVM outVec tempVec V.empty
-    flip evalStateT emptyState $ runAmb (mapM_ eval prog.ops) (\_ _ -> use #outVec >>= \v -> lift (V.freeze v >>= k)) (pure ())
+        getOut _ _ = do 
+            out <- use #outVec
+            lift (V.freeze out >>= k)
+    flip evalStateT emptyState $ runAmb (mapM_ eval prog.ops) getOut (pure ())
 
-writeReg :: (PrimMonad m, MonadEgg m) => Int -> Reg -> EvalM m ()
+writeReg :: (MonadState (NaiveVMState (PrimState m)) m, PrimMonad m) => Int -> Reg -> m ()
 writeReg val (Temporary regId) = #tempVec $= \v -> VU.write v regId val
 writeReg val (Output regId) = do
     #outVec $= \v -> VU.write v regId val
@@ -46,7 +49,7 @@ writeReg val (Output regId) = do
 -- - Registers aren't read before they are written
 -- - The current match isn't read after the next Join call
 -- It might be nicer to split joins and the non-control-flow ops
-eval :: (PrimMonad m, MonadEgg m) => VM -> EvalM m ()
+eval :: (PrimMonad m, MonadEgg m sym) => VM sym -> EvalM m ()
 eval (CopyValue pos reg) = do
     val <- readCur pos
     writeReg val reg
@@ -61,12 +64,13 @@ eval (Join classReg symbol prefixRegs) = do
         forMatches Both classId symbol prefix $ \match -> do
             #curMatch .= match
             cont ()
-eval (Startup symbol prefixRegs) = do
+eval (Startup symbol prefixRegs into) = do
     prefix <- loadRegs prefixRegs
     withFuture $ \cont -> do
         forClasses $ \classId -> do
             forMatches Both classId symbol prefix $ \match -> do
-                traceM $ "Startup: " <> show match
+                -- traceM $ "Startup: " <> show match
+                writeReg classId into
                 #curMatch .= match
                 cont ()
 eval (HashLookup sym regs out)= do
@@ -81,7 +85,7 @@ eval (HashLookup sym regs out)= do
               old <- readReg reg
               when (old /= new) empty
           Ignore -> pure ()
-loadRegs :: (MonadEgg m, PrimMonad m) => [Reg] -> EvalM m (V.Vector Int)
+loadRegs :: (MonadEgg m sym, PrimMonad m) => [Reg] -> EvalM m (V.Vector Int)
 loadRegs ls = V.fromList <$> traverse readReg ls
 
 ($=) :: MonadState s m => Lens' s a -> (a -> m ()) -> m ()
@@ -89,10 +93,10 @@ loadRegs ls = V.fromList <$> traverse readReg ls
   v <- use l
   f v
 
-readReg :: (PrimMonad m, MonadEgg m) => Reg -> EvalM m Int
+readReg :: (PrimMonad m, MonadEgg m sym) => Reg -> EvalM m Int
 readReg (Temporary regId) = use #tempVec >>= \v -> VU.read v regId
 readReg (Output regId) = use #outVec >>= \v -> VU.read v regId
-readCur :: (PrimMonad m, MonadEgg m) => Int -> EvalM m Int
+readCur :: (PrimMonad m, MonadEgg m sym) => Int -> EvalM m Int
 readCur pos = do
   cur <- use #curMatch
   pure $ fromJust $ cur ^? ix pos

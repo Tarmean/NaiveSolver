@@ -1,7 +1,7 @@
 module Lib
     ( someFunc
     ) where
-import qualified Types
+import qualified EGraph.SimpleEgg as Data.SimpleEgg
 
 someFunc :: IO ()
-someFunc = Types.main
+someFunc = Data.SimpleEgg.batchTest

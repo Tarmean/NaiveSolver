@@ -24,10 +24,10 @@ import Optics.Utils
 import GHC.Stack (HasCallStack)
 import Debug.Trace (traceM)
 
-assemble :: MatchEnv -> [PlanStep] -> Program
-assemble env ps = Program out st.nodeUniq st.varUniq
+assemble :: MatchEnv -> [PlanStep] -> (M.Map ExprNodeId symb) -> Program symb
+assemble env ps mkSym = Program out st.nodeUniq st.varUniq
   where
-    (out, st) = runState (execWriterT (mapM_ doAssembly ps)) (AssemblyState mempty mempty env.patGraph firstOccs becomeGround 0 0)
+    (out, st) = runState (execWriterT (mapM_ doAssembly ps)) (AssemblyState mempty mempty env.patGraph firstOccs becomeGround 0 0 mkSym)
 
     firstOccs = M.fromListWith (<>) [ (node, [(pos, learned)])  | (learned, ArgOf _ node pos) <- M.toList env.knownClass]
     becomeGround = M.fromListWith (<>) [ (node, S.singleton learned)  | (learned, CongruenceLookup _ node) <- M.toList env.knownClass ]
@@ -40,7 +40,7 @@ assembleDebug env ps = (firstOccs, becomeGround)
 
 
 
-data AssemblyState = AssemblyState
+data AssemblyState symb = AssemblyState
   { regMap :: M.Map ExprNodeId Reg
   , isLoaded :: S.Set ExprNodeId
   , pgraph :: PGraph
@@ -48,23 +48,24 @@ data AssemblyState = AssemblyState
   , becomeGround :: M.Map ExprNodeId (S.Set ExprNodeId)
   , varUniq :: Int
   , nodeUniq :: Int
+  , mkSymbol :: M.Map ExprNodeId symb
   }
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Generic)
 
-type M = WriterT (Seq.Seq VM) (State AssemblyState)
+type M symb = WriterT (Seq.Seq (VM symb)) (State (AssemblyState symb))
 
-newReg :: ExprNodeId -> M Reg
+newReg :: ExprNodeId -> M symb Reg
 newReg eid = do
-    out <- use (#pgraph . #definitions . at eid) >>= \case
-       Nothing -> error "Invalid pgraph"
-       Just (Left (VarId l)) -> do
-           #varUniq %= max l
-           pure $ Output l
-       Just (Right _) -> fmap Temporary (#nodeUniq <<%= succ)
+    isOut <- preuse (#pgraph . #outMap . ix eid)
+    out <- case isOut of
+       Just o -> do
+           #varUniq %= max o
+           pure $ Output o
+       Nothing -> fmap Temporary (#nodeUniq <<%= succ)
     #regMap %= M.insert eid out
     pure out
 
-maybeNewRegFor :: ExprNodeId -> M (Reg, Bool)
+maybeNewRegFor :: ExprNodeId -> M symb (Reg, Bool)
 maybeNewRegFor pid = do
     use (#regMap . at pid) >>= \case
         Just reg -> return (reg, False)
@@ -72,33 +73,37 @@ maybeNewRegFor pid = do
             reg <- newReg pid
             #regMap %= M.insert pid reg
             return (reg, True)
-regFor :: ExprNodeId -> M Reg
+regFor :: ExprNodeId -> M symb Reg
 regFor pid = fst <$> maybeNewRegFor pid
-tell1 :: VM -> M ()
+tell1 :: VM symb -> M symb ()
 tell1 = tell . Seq.singleton
-loadWith :: ExprNodeId -> VM -> M ()
+loadWith :: ExprNodeId -> VM symb -> M symb ()
 loadWith nid vm = do
    tell1 vm
    #isLoaded %= S.insert nid
-tellJoin :: PlanStep -> M ()
+toSymbol :: ExprNodeId -> M symb symb
+toSymbol a = use (#mkSymbol . singular (ix a))
+tellJoin :: PlanStep -> M symb ()
 tellJoin p = do
    hasParent <- gets $ has (#isLoaded . ix p.node)
+   funcHead <- toSymbol p.node
    if hasParent
    then do
       parReg <- regFor p.node
       prefix <- prefixRegs p.stats.preKnown p.expr.argIds
-      tell1 Join {join_class = parReg, join_symbol = p.expr.fSymbol, prefix = prefix}
+      tell1 Join {join_class = parReg, join_symbol = funcHead, prefix = prefix}
    else do
       prefix <- prefixRegs p.stats.preKnown p.expr.argIds
-      tell1 Startup {join_symbol = p.expr.fSymbol, prefix = prefix}
+      reg <- regFor p.node
+      tell1 Startup {join_symbol = funcHead, prefix = prefix, into = reg}
 
-prefixRegs :: S.Set ArgPos -> [ExprNodeId] -> M [Reg]
+prefixRegs :: S.Set ArgPos -> [ExprNodeId] -> M symb [Reg]
 prefixRegs known args = do
     let count = countInfix known
     traverse regFor (take count args)
     
     
-doAssembly :: PlanStep -> M ()
+doAssembly :: PlanStep -> M symb ()
 doAssembly pstep = do
    tellJoin pstep
    -- store all values we haven't seen before into output
@@ -128,12 +133,12 @@ doAssembly pstep = do
      node <- exprFor nid
      loadCongruence nid node
 
-markLoaded :: ExprNodeId -> M ()
+markLoaded :: ExprNodeId -> M symb ()
 markLoaded n = #isLoaded %= S.insert n
 
-ensureChildrenCongruenceLoaded :: PElem -> M ()
+ensureChildrenCongruenceLoaded :: PElem -> M symb ()
 ensureChildrenCongruenceLoaded node = forChildrenOf node loadCongruence
-loadCongruence :: ExprNodeId -> PElem -> M ()
+loadCongruence :: ExprNodeId -> PElem -> M symb ()
 loadCongruence pid node = do
     isLoaded <- gets (has $ #isLoaded . ix pid)
     when (not isLoaded) $ do
@@ -141,7 +146,7 @@ loadCongruence pid node = do
         outReg <- regFor pid
         argRegs <- traverse regFor node.argIds
         loadWith pid (HashLookup node.fSymbol argRegs (StoreInto outReg))
-forChildrenOf :: PElem -> (ExprNodeId -> PElem -> M ()) -> M ()
+forChildrenOf :: PElem -> (ExprNodeId -> PElem -> M symb ()) -> M symb ()
 forChildrenOf node f = do
         forM_ node.argIds $ \child -> do
             overM_ (#pgraph . #definitions . at child) \case
@@ -149,7 +154,7 @@ forChildrenOf node f = do
               _ -> pure ()
 
 
-exprFor :: HasCallStack => ExprNodeId -> M PElem
+exprFor :: HasCallStack => ExprNodeId -> M symb PElem
 exprFor pid = do
     use (#pgraph . #definitions . at pid) >>= \case
         Nothing -> error "Invalid pgraph"

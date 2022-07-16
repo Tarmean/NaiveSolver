@@ -67,13 +67,15 @@ library
       src
   default-extensions:
       GHC2021
-  ghc-options: -Wall -Wunused-dependencies
+  ghc-options: -Wall -Wunused-dependencies -O2
   build-depends:
       QuickCheck
     , base >=4.7 && <5
     , bytestring
     , containers
     , distributive
+    , express
+    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
@@ -81,9 +83,11 @@ library
     , kure
     , lens
     , mtl
+    , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
+    , speculate
     , text
     , transformers
     , unordered-containers
@@ -99,7 +103,7 @@ executable NaiveSolver-exe
       app
   default-extensions:
       GHC2021
-  ghc-options: -Wall -Wunused-dependencies -threaded -rtsopts -with-rtsopts=-N -Wall
+  ghc-options: -Wall -Wunused-dependencies -O2 -O2 -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:
       NaiveSolver
     , QuickCheck
@@ -107,6 +111,8 @@ executable NaiveSolver-exe
     , bytestring
     , containers
     , distributive
+    , express
+    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
@@ -114,9 +120,11 @@ executable NaiveSolver-exe
     , kure
     , lens
     , mtl
+    , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
+    , speculate
     , text
     , transformers
     , unordered-containers
@@ -133,7 +141,7 @@ test-suite NaiveSolver-test
       test
   default-extensions:
       GHC2021
-  ghc-options: -Wall -Wunused-dependencies -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wunused-dependencies -O2 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       NaiveSolver
     , QuickCheck
@@ -141,6 +149,8 @@ test-suite NaiveSolver-test
     , bytestring
     , containers
     , distributive
+    , express
+    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
@@ -148,9 +158,11 @@ test-suite NaiveSolver-test
     , kure
     , lens
     , mtl
+    , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
+    , speculate
     , text
     , transformers
     , unordered-containers

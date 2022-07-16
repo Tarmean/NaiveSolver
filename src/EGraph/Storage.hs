@@ -40,15 +40,15 @@ import Data.Generics.Product.Fields (HasField)
 import Control.Monad.Identity (IdentityT)
 import qualified Data.Vector as VB
 import qualified Data.Set as S
-import Debug.Trace (traceM)
 import Control.Monad.Writer (WriterT, tell, execWriterT, MonadWriter)
 import qualified Data.IntMap.Merge.Strict as MM
 import qualified Data.List as L
-import GHC.IO (unsafeSTToIO, unsafeDupablePerformIO)
 import Control.Monad.ST (runST, ST)
 import GHC.Stack (HasCallStack)
 import Control.Monad.RWS (MonadReader)
+-- import Debug.Trace (traceM, trace)
 
+traceM _ = pure ()
 -- TODO: track refcounts of classes, and do incremental reachability checks from some root set
 -- This way we can do cheap-ish garbage collection when replacing expressions via CHR
 type Id = Int
@@ -81,6 +81,17 @@ showClass cls
   | otherwise = unlines [ show cls.class_id  <> " = " <> row |(sym,table) <- M.toList cls.tables, row <- showTable sym table ]
 showEgg :: EGraph -> String
 showEgg eg = concat [ showClass cls | cls <- M.elems eg.classes ]
+showNew :: UpdatedEGraph -> String
+showNew uegg = showEgg uegg.egraph { classes = classes' <> newClasses }
+  where
+    classes' = M.mapMaybe updateClass uegg.egraph.classes
+    newClasses = M.mapWithKey mkClass $ uegg.new_data M.\\ uegg.egraph.classes
+    mkClass cid table = AClass cid table IS.empty IS.empty
+    updateClass :: AClass -> Maybe AClass
+    updateClass cls 
+      | Just o <- uegg.new_data M.!? cls.class_id = Just $ cls { tables = o }
+      | otherwise = Nothing
+        
 
 
 tableSize :: Table -> Int
@@ -259,7 +270,8 @@ data RebuildState s = RS {
     dirty_ids :: ClassSet,
     pending_merges :: S.Set (Id,Id),
     rewritten :: ClassSet,
-    egraph :: EGraph
+    egraph :: EGraph,
+    new_data :: !(ClassMap (SymbolMap Table))
   } deriving (Generic)
 data FRebuildState = FRS {
     dirtiedClasses :: ClassMap ClassSet,
@@ -270,31 +282,37 @@ data FRebuildState = FRS {
   } deriving (Eq, Ord, Show, Generic)
 
 
-newRowsToTables :: (Monad m) => SymbolMap Int -> ClassDict s (SymbolDict s (RowQueue s)) -> m (ClassMap (SymbolMap Table))
-newRowsToTables row_sizes cm = classMap `seq` pure classMap
+newRowsToTables :: (PrimMonad m, s ~ PrimState m) => SymbolMap Int -> ClassDict s (SymbolDict s (RowQueue s)) -> (SymbolMap (HM.HashMap Row Id)) -> m (ClassMap (SymbolMap Table))
+newRowsToTables row_sizes cm old_data = classMap
   where
     -- absolutely horrendous hack to avoid a memory leak
     -- without the unsafeDupablePerformIO the lists have to be forced into memory
 
-    classMap = M.fromList $ do
-        (k,vs) <-  unsafeDupablePerformIO $ unsafeSTToIO (D.toList cm)
-        pure $ (k,) $ M.fromList $ do
-            (k2,v) <- unsafeDupablePerformIO  $ unsafeSTToIO (D.toList vs)
-            pure (k2, mkTable (row_sizes ! k2) $ unsafeDupablePerformIO $ unsafeSTToIO $ GV.unsafeFreeze v)
+    classMap = M.fromList <$> do
+        withM (D.toList cm) $ \(k,vs) -> do
+            vo <- withM  (D.toList vs) $ \(k2,v) -> do
+                fv <- GV.freeze v
+                let old = M.findWithDefault mempty k2 old_data
+                pure (k2, mkTable (row_sizes ! k2) fv old)
+            pure $ (k,) $ M.fromList vo
+withM :: (Monad f) => f [a1] -> (a1 -> f a2) -> f [a2]
+withM m f = mapM f =<< m
 
 
-runRebuild :: EGraph -> (forall s. RebuildT (ST s) a) -> (UpdatedEGraph, a)
+runRebuild :: UpdatedEGraph -> (forall s. RebuildT (ST s) a) -> (UpdatedEGraph, a)
 runRebuild eg m = runST $ do
   rs <- mkRebuildState eg
   (a,rs') <- runStateT (unRebuildT m) rs
-  newRows <- newRowsToTables rs'.egraph.row_width rs'.new_rows
-  pure (UpdatedEGraph rs'.egraph newRows, a)
+  newRows <- newRowsToTables rs'.egraph.row_width rs'.new_rows eg.egraph.hash_lookup
+  let eg' = applyUpdate (UpdatedEGraph rs'.egraph rs'.new_data)
+  pure (UpdatedEGraph eg' newRows, a)
 
-mkTable :: Int -> VU.Vector Int -> Table
-mkTable row_width content = Table {content = naiveNormalize content, references = theReferences, ..}
+mkTable :: Int -> VU.Vector Int -> HM.HashMap Row Id -> Table
+mkTable row_width content old = Table {content = naiveNormalize content, references = theReferences, ..}
   where
     theReferences = IS.fromList $ VU.toList content
-    naiveNormalize = VU.concat . map head . L.group . L.sort . toListOf (chunksOf row_width)
+    naiveNormalize = VU.concat . filter not_old . map head . L.group . L.sort . toListOf (chunksOf row_width)
+    not_old k = not $ HM.member k old
 
 
 freezeRebuildState :: (s ~ PrimState m, PrimMonad m) => RebuildState s -> m (FRebuildState)
@@ -368,14 +386,14 @@ mkUnion a0 b = do
       Just old -> do
          rw <- use (#egraph . #row_width)
          d <- freezeSymDicts old rw
-         traceM ("old rows " <> show d)
+         -- traceM ("old rows " <> show d)
          forIxP old (ieachP @m) $ \sym vecs -> do
              w <- getWidth sym
              if w == 0
              then reinsertAndQueue a sym VU.empty
              else do
                  forP vecs (GV.chunksOfM w) $ \row -> do
-                     reinsertAndQueue a sym =<< VU.unsafeFreeze row
+                     reinsertAndQueue a sym =<< VU.freeze row
 appUnions :: (MonadState (RebuildState (PrimState m)) m, PrimMonad m, MonadInsert m) => m ()
 appUnions = do
     s <- swapP #pending_merges (pure S.empty)
@@ -402,6 +420,7 @@ reinsert c symbol row = do
   traceM ("reinsert: " <> show c <> " = " <> show symbol <> "(" <> show row <> ")")
   useEgg (resolveE symbol row) >>= \case
     Just o -> do
+      -- traceM ("try union: " <> show c <> " = " <> show symbol <> "(" <> show row <> ") -> " <> show o)
       queueUnion c o
     Nothing -> do
       #egraph . #hash_lookup . at symbol . non mempty . at row ?= c
@@ -478,12 +497,12 @@ toFixpoint = app_merges False
          rewriteNewRows
          app_merges False
 
-mkEGraph :: SymbolMap Int -> EGraph 
-mkEGraph width = EGraph mempty width mempty UF.empty
-mkRebuildState :: PrimMonad m => EGraph -> m (RebuildState (PrimState m))
+mkEGraph :: SymbolMap Int -> UpdatedEGraph 
+mkEGraph width = UpdatedEGraph (EGraph mempty width mempty UF.empty) mempty
+mkRebuildState :: PrimMonad m => UpdatedEGraph -> m (RebuildState (PrimState m))
 mkRebuildState eg = do
    dict <- D.initialize  32
-   pure $ RS mempty dict mempty mempty mempty eg
+   pure $ RS mempty dict mempty mempty mempty eg.egraph eg.new_data
 
 newClass :: Monad m => RebuildT m Id
 newClass = do
@@ -501,6 +520,16 @@ mkApp sym args = do
         reinsertAndQueue cid sym vargs
         pure cid
   where vargs = (VU.fromList args)
+addApp :: PrimMonad m => Id -> Symbol -> [Id] -> RebuildT m ()
+addApp cid sym args = do
+    cid <- useEgg (normalize cid)
+    m <- useEgg (resolveE sym vargs)
+    case m of
+      Just o
+        | cid == o -> traceM ("skipped: " <> show cid <> " = " <> show sym <> "(" <> show args <> ") -> " <> show o)
+        | otherwise -> queueUnion cid o
+      Nothing -> reinsertAndQueue cid sym vargs
+  where vargs = (VU.fromList args)
 
 testInsert :: (PrimMonad m) => RebuildT m ()
 testInsert = do
@@ -515,7 +544,7 @@ testInsert = do
   toFixpoint
 
 doTest :: UpdatedEGraph
-doTest = fst $ runRebuild (mkEGraph $ M.fromList [(2,0), (3,1)]) testInsert
+doTest = fst $ runRebuild (mkEGraph $ M.fromList [(2,0), (3,1)])testInsert
 
 
 (!) :: HasCallStack => ClassMap k -> Int -> k

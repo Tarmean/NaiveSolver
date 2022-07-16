@@ -11,6 +11,8 @@ newtype Id = Id Int
 newtype Symbol = Symbol Int
   deriving stock Generic
   deriving newtype (Eq, Ord, Show, Hashable)
+data ONSymbol = OSymbol Int | NSymbol Int | ONSymbol Int
+  deriving (Eq, Ord, Show)
 newtype Var = Var Int
   deriving stock Generic
   deriving newtype (Eq, Ord, Show, Hashable, Num)

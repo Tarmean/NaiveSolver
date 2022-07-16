@@ -12,26 +12,27 @@ newtype ExprNodeId = EId Int
   deriving (Eq, Ord, Show, Generic)
 type PElem = Elem' ExprNodeId
 
-data VOP = V VarId | P Pat
-  deriving Show
-newtype Pat = Pat (Elem' VOP)
-  deriving Show
-instance Num VOP where
-    fromInteger a = V (VarId $ fromInteger a)
-pap :: Int -> [VOP] -> Pat
-pap n args = (Pat $ Elem (Symbol n) args)
-ppap :: Int -> [VOP] -> VOP
-ppap n args = P (pap n args)
+data PMatch = PMatch (Maybe VarId) Symbol [Pat]
+  deriving (Show, Eq, Ord)
+data Pat = PV VarId | PApp PMatch
+  deriving (Show, Eq, Ord)
+instance Num Pat where
+    fromInteger a = PV (VarId $ fromInteger a)
+pap :: Int -> Int -> [Pat] -> Pat
+pap cid n args = (PApp $ PMatch (Just $ VarId cid) (Symbol n) args)
+ppap :: Int -> [Pat] -> Pat
+ppap n args = PApp $ PMatch Nothing (Symbol n) args
 
 
 
 newtype VarId = VarId Int
  deriving (Eq, Ord, Show)
 
-data Program = Program {ops :: Seq.Seq VM, tempCount :: Int, outCount :: Int }
+data Program symb = Program {ops :: Seq.Seq (VM symb), tempCount :: Int, outCount :: Int }
   deriving (Eq, Ord, Show, Generic)
 data PGraph = PGraph {
-    definitions :: M.Map ExprNodeId (Either VarId PElem)
+    definitions :: M.Map ExprNodeId (Either VarId PElem),
+    outMap :: M.Map ExprNodeId Int
     -- freeVars :: M.Map ExprNodeId (S.Set ExprNodeId)
  }
   deriving (Eq, Ord, Show, Generic)
@@ -44,12 +45,12 @@ data PlanStep = PlanStep { stats :: Stats, node :: ExprNodeId, expr :: PElem }
 -- The VM has
 --   - A number of registers
 --   - A current cursor to a specific DB row
-data VM
+data VM symb
   = CopyValue ArgPos Reg -- ^ Copy from the active row to a register
   | HashLookup Symbol [Reg] RegOut -- ^ Use the congruence closure hash-map to retrieve a value
   | GuardEq ArgPos Reg -- ^ We already know what this arg should be, filter!
-  | Join { join_class :: Reg, join_symbol :: Symbol, prefix :: [Reg] } -- ^ Join a new table, this acts as a nested loop
-  | Startup { join_symbol :: Symbol, prefix :: [Reg] } -- ^ Like Join, but we don't know the equality class the table is in so also loop over all classes
+  | Join { join_class :: Reg, join_symbol :: symb, prefix :: [Reg] } -- ^ Join a new table, this acts as a nested loop
+  | Startup { join_symbol :: symb, prefix :: [Reg], into :: Reg } -- ^ Like Join, but we don't know the equality class the table is in so also loop over all classes
   deriving (Eq, Ord, Show, Generic)
 
 data RegOut
