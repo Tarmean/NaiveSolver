@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -59,6 +60,9 @@ import QuickSpec.Internal.Type (Typed(..))
 import Monad.Zipper
 import Monad.StateT2
 import Data.Maybe (fromMaybe)
+import qualified Data.Set as S
+import Debug.Trace
+import Data.Foldable (asum)
 
 
 showTypRep :: TypeRep  -> String
@@ -132,14 +136,14 @@ instance Walkable [a] where
     zApp (ZCons x) xs = x:xs
 
 
-newtype ShrinkT o (r::Type) m a = ShrinkT { unShrink :: ZipperT o (ContT r m) a }
+newtype ShrinkT x o (r::Type) m a = ShrinkT { unShrink :: ZipperT x o (ContT r m) a }
   deriving (Functor, Applicative, Monad, MonadZipper o)
 -- deriving instance Monad m => MonadState (ShrinkState f o) (ShrinkT' f o r m)
 
-shrinkT :: (Zipper o -> ((a, Zipper o) -> m r) -> m r) -> ShrinkT o r m a
+shrinkT :: ((o -> ContT r m x, Zipper o) -> ((a, (o -> ContT r m x, Zipper o)) -> m r) -> m r) -> ShrinkT x o r m a
 shrinkT f = ShrinkT $ ZipperT $ StateT $ \s -> ContT $ \k -> f s k
-runShrinkT :: o -> ShrinkT o r m a -> ((a, Zipper o) -> m r) -> m r
-runShrinkT o m k = runContT (runZipperT o (unShrink m)) k
+runShrinkT :: r1 -> ShrinkT r1 r1 r2 m a -> ((a, Zipper r1) -> m r2) -> m r2
+runShrinkT o m k = runContT (runZipperT pure o (unShrink m)) k
 
 data OraclingT m a = O (m (a, (Bool -> OraclingT m a)))
 newtype RoseForestT m a = RoseF { unForestT :: m (RoseCell m a)}
@@ -181,10 +185,13 @@ class Monad m => MonadVar m where
     mkVar :: QT.Type -> m Var
     default mkVar :: (m ~ t n, MonadTrans t, MonadVar n) => QT.Type -> m Var
     mkVar = lift . mkVar
-instance MonadVar m => MonadVar (ZipperT o m)
+runVarT :: Monad m => VarT m a -> m a
+runVarT (VarT m) = evalStateT m 0
+
+instance MonadVar m => MonadVar (ZipperT r o m)
 instance MonadVar m => MonadVar (StateT o m)
 newtype VarT m a = VarT { unVarT :: StateT Int m a }
-  deriving (Functor, Applicative, Monad, MonadWriter s, MonadZipper o, MonadTrans)
+  deriving (Functor, Applicative, Monad, MonadWriter s, MonadZipper o, MonadTrans, Alternative, MonadOut r, MonadOracle)
 instance MonadState s m => MonadState s (VarT m) where
   get = VarT (lift get)
   put = VarT . lift . put
@@ -200,6 +207,8 @@ class Monad m => MonadOracle m where
     checkpoint :: m ()
     default checkpoint :: (m ~ t n, MonadTrans t, MonadOracle n) => m ()
     checkpoint = lift checkpoint
+instance MonadOracle m => MonadOracle (StateT s m)
+instance (Monoid s, MonadOracle m) => MonadOracle (WriterT s m)
 
 -- (doRewrite >> checkPoint ) `orElse` doNothing
 
@@ -209,15 +218,23 @@ class Monad m => MonadOracle m where
 
 joinForest :: Monad m => m (RoseForestT m a) -> RoseForestT m a
 joinForest = RoseF . join . fmap unForestT
-instance (Walkable o, Monad m) => MonadOracle (ShrinkT o (RoseForestT m o) m) where
-    checkpoint = shrinkT $ \s k -> do
-         pure $ RoseF $ pure (RoseCell (toRoot s) (joinForest $ k ((), s)) empty)
+instance (Walkable o, Monad m) => MonadOracle (ShrinkT x o (RoseForestT m x) m) where
+    checkpoint = do
+        o <- getOut
+        shrinkT $ \s k -> do
+             pure $ RoseF $ pure (RoseCell o (joinForest $ k ((), s)) empty)
 
-runShrinkForest :: Monad m => o -> ShrinkT o (RoseForestT m o) m a -> RoseForestT m o
-runShrinkForest o m = joinForest $ runShrinkT o m (\_ -> pure empty)
+instance (Monad m, Walkable o) => MonadOut x (ShrinkT x o r m) where
+    getOut = ShrinkT getOut
 
-runShrinkList :: o -> ShrinkT o a [] a -> [a]
-runShrinkList e (ShrinkT m) = runContT (evalZipperT e m) pure
+runShrinkForest :: (Walkable x, Monad m) => x -> ShrinkT x x (RoseForestT m x) m a -> RoseForestT m x
+runShrinkForest o m = joinForest $ runShrinkT o m (\(_,a) -> pure empty)
+  -- where
+  --   foo :: Applicative m => x -> m (RoseForestT m x)
+  --   foo x = pure (pure x)
+
+-- runShrinkList :: o -> ShrinkT o o a [] a -> [a]
+-- runShrinkList e (ShrinkT m) = runContT (evalZipperT pure e m) pure
 
 class Applicative m => Propagate m o | o -> m where
     mkApp:: o -> o -> m o
@@ -274,9 +291,24 @@ instance MkExpr Int  where
 -- test2 :: [Expr]
 
 test2 :: RoseForestT Identity (Bin () Constant)
-test2 = runShrinkForest (expr (1::Int,[2::Int,1,3], "xxy"::String)) $ do
-    try (groupExprs @Int >> checkpoint)
-    try (groupExprs @Char >> checkpoint)
+test2 = runShrinkForest (expr (1::Int,[2::Int,1,3], "xxy"::String)) $ runVarT $ do
+    varUniqs (eachLeaf . onlyIf notFunction)
+
+pick :: Alternative f => [a] -> f a
+pick = asum . map pure
+tryModify :: (MonadZipper (Bin () Constant) m, Typeable a, MkExpr a) => (a -> a) -> m ()
+tryModify f = do
+    s <- cursor
+    case s of
+      Leaf _ c -> case QT.fromValue (QH.con_value c) of
+        Just (Identity (o :: a)) -> do
+          let l' = expr (f o)
+          setCursor $ l'
+        _ -> pure ()
+      _ -> pure ()
+          
+    -- varUniqs (eachLeaf . onlyIf notFunction)
+    -- try (groupExprs @Char >> checkpoint)
 
 try :: Alternative f => f () -> f ()
 try m = m <|> pure ()
@@ -292,11 +324,12 @@ pop = do
         (x:xs) -> put xs >> pure (Just x)
 
 type Visitor o = (forall n. MonadZipper o n => n () -> n ())
-viewing :: (MonadZipper o n) => Visitor o -> ZipperT [o] n () -> n ()
-viewing vis x = do
-   o <- execWriterT $ vis (cursor >>= tell . Endo . (:))
-   o' <- extractZipperT (appEndo o []) x
-   evalStateT (vis (pop >>= maybe (pure ()) setCursor)) o'
+-- viewing :: (MonadZipper o n) => Visitor o -> ZipperT r [o] n () -> n ()
+-- viewing vis x = do
+--    undefined
+   -- o <- execWriterT $ vis (cursor >>= tell . Endo . (:))
+   -- o' <- extractZipperT rez (appEndo o []) x
+   -- evalStateT (vis (pop >>= maybe (pure ()) setCursor)) o'
 
    
 
@@ -304,19 +337,74 @@ isVar :: Bin k o -> Bool
 isVar (IVar _ _) = True
 isVar _ = False
 
-groupExprs :: forall a m o. (Typed o, Typeable a, MonadZipper o m, MonadVar m) => m ()
-groupExprs = do
-   viewing (leavesOf (\e -> typ e == QT.typeRep (undefined :: proxy a))) changeList
- where
-   changeList :: MonadVar n => ZipperT [o] n ()
-   changeList = do
-       cursor >>= \case
-          [] -> pure ()
-          (x:_) -> do
-             let t = typ x
-             v <- mkVar t
-             let va = Var v
-             undefined
+class (MonadZipper x m, MonadZipper y n) => HasView m n x y | m y -> n, n x -> m where
+    zoomShrink :: m y -> (y -> m ()) -> n a -> m a
+instance (Walkable y, Walkable x, Monad m) => HasView (ZipperT r x m) (ZipperT r y m) x y where
+    zoomShrink f t = walkIntoM f t
+instance (Walkable x, Walkable y) => HasView (ShrinkT v x r m) (ShrinkT v y r m) x y where
+  zoomShrink f t x = ShrinkT (zoomShrink (unShrink f) (unShrink . t) (unShrink x))
+instance (HasView m n x y) => HasView (VarT m) (VarT n) x y where
+    zoomShrink f t m = VarT $ StateT $ \s -> 
+      let 
+        unV :: VarT m a -> m a
+        unV v = fmap fst $ runStateT (unVarT v) s
+      in zoomShrink (unV f) (unV . t) (runStateT (unVarT m) s)
+    
+listView :: (HasView m n o [o]) => Visitor o -> n a -> m a
+listView v = zoomShrink getter setter
+  where
+    getter = fmap (`appEndo` [])$ execWriterT $ v (cursor >>= tell . Endo . (:))
+    setter = evalStateT (v (pop >>= maybe (pure ()) setCursor))
+groupedView :: (HasView m n o [o], Ord k, Pretty o, Pretty k) => Visitor o -> (o -> k) -> (k -> n ()) -> m ()
+groupedView v k m = do
+   ls <- getter
+   let ks = M.fromListWith (<>) [(k x, [x]) | x <- ls]
+   traceM $ render (pPrint ks)
+   forM_ (M.toList ks) $ \(theKey,theVals) -> do
+       -- traceM $ render ("hewwo" <>pPrint (theKey, theVals))
+       zoomShrink (pure theVals) (setter theKey) (m theKey)
+  where
+    getter = fmap (`appEndo` [])$ execWriterT $ v (cursor >>= tell . Endo . (:))
+    setter p = evalStateT (v (onlyIf (\x -> k x == p) (pop >>= maybe (pure ()) setCursor)))
+
+varUniqs :: (o ~ Bin () f, Typed o, MonadVar n, Ord o, HasView m n o [o], Pretty f, Alternative n, MonadOracle n) => Visitor o -> m ()
+varUniqs p = groupedView p id $ \k -> do
+    s <- cursor
+    when (length s > 1) $ try $ do
+        v <- mkVar (typ k)
+        modCursor $ map (\_ -> IVar () v)
+        checkpoint
+
+notFunction :: Typed a => a -> Bool
+notFunction v = case typ v of
+    (T.App (T.F _ QT.Arrow) _) -> False
+    _ -> True
+
+modCursor :: MonadZipper o m => (o -> o) -> m ()
+modCursor p = do
+  s <- cursor
+  setCursor (p s)
+setListVal :: (MonadZipper [o] m) => o -> m ()
+setListVal x = do
+    ls <- cursor
+    case ls of
+      [] -> pure ()
+      (_:xs) -> setCursor (x:xs)
+
+rewriteConstants :: forall m n o. (Typed o, HasView m n o [o]) => QT.Type -> n () -> m ()
+rewriteConstants ty = listView (leafsWithType ty)
+
+shrinkList :: MonadZipper [o] m  => m ()
+shrinkList = undefined
+
+leafsWithType :: (MonadZipper p m, Typed p) => QT.Type -> m () -> m ()
+leafsWithType theType m = eachLeaf (onlyIf typMatches m)
+  where typMatches e = typ e == theType
+
+typeRepOf :: forall a. Typeable a => QT.Type
+typeRepOf = QT.typeRep ( undefined :: proxy a )
+
+
 listHead :: MonadZipper [o] m => m (Maybe o)
 listHead = cursor >>= \case
   (x:_) -> pure (Just x)
@@ -350,7 +438,7 @@ isApp :: Bin k o -> Bool
 isApp (App _ _ _) = True
 isApp _= False
 leavesOf :: (MonadZipper o m, Bounded (Dir o), Enum (Dir o)) => (o -> Bool) -> m () -> m ()
-leavesOf p m = eachLeaf (doWhen p m)
+leavesOf p m = eachLeaf (onlyIf p m)
 whenType :: (Typed o, MonadZipper o m) => QT.Type -> m () -> m ()
 whenType ty m = do
     s <- cursor
@@ -358,17 +446,20 @@ whenType ty m = do
     then m
     else pure ()
 
-instance MonadTrans (ShrinkT o r) where
+instance MonadTrans (ShrinkT x o r) where
     lift sm = ShrinkT $ lift $ lift sm
 
 constContT :: m r -> ContT r m a
 constContT m = ContT $ \_ -> m
-instance (Applicative m, Monoid r) => Alternative (ShrinkT o r m) where
+instance (Applicative m, Monoid r) => Alternative (ShrinkT x o r m) where
     empty = ShrinkT $ lift $ constContT $ pure @m (mempty @r)
     ShrinkT x <|> ShrinkT y = ShrinkT $ ZipperT $ StateT $ \z -> ContT $ \c -> liftA2 (<>) (ml x z c) (ml y z c)
       where
         ml m z c = (runContT (runStateT (unZipperT m) z) c)
-instance (Applicative m, Monoid r) => MonadFail (ShrinkT o r m) where
+instance (Applicative m, Monoid r) => MonadPlus (ShrinkT x o r m) where
+    mzero = empty
+    mplus = (<|>)
+instance (Applicative m, Monoid r) => MonadFail (ShrinkT x o r m) where
     fail _ = empty
 
 consArg :: forall t m k o x. (o ~ Bin k x, Typeable t, MonadZipper o m, Alternative m, Typed o) => t -> Int -> m ()

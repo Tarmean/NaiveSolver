@@ -48,6 +48,7 @@ dependencies:
 - indexed
 - quickspec
 - twee-lib
+- zippers
 library:
   source-dirs: src
 ghc-options:

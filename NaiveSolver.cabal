@@ -99,6 +99,7 @@ library
     , unordered-containers
     , vector
     , vector-hashtables
+    , zippers
   default-language: Haskell2010
 
 executable NaiveSolver-exe
@@ -137,6 +138,7 @@ executable NaiveSolver-exe
     , unordered-containers
     , vector
     , vector-hashtables
+    , zippers
   default-language: Haskell2010
 
 test-suite NaiveSolver-test
@@ -176,4 +178,5 @@ test-suite NaiveSolver-test
     , unordered-containers
     , vector
     , vector-hashtables
+    , zippers
   default-language: Haskell2010
