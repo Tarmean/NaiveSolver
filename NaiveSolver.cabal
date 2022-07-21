@@ -51,13 +51,18 @@ library
       EGraph.UnionFind
       FiniteDomains
       IncrementalDatalog
+      IndexADT
+      IndexedWalk
       Lib
       MinMax
       Monad.Amb
+      Monad.StateT2
+      Monad.Zipper
       Optics.Utils
       Propagator
       Range
       SKI
+      SmartShrink
       Test
       TestNonempty
       Types
@@ -74,22 +79,23 @@ library
     , bytestring
     , containers
     , distributive
-    , express
-    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
     , hashable
+    , indexed
     , kure
+    , leancheck
     , lens
     , mtl
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
-    , speculate
+    , quickspec
     , text
     , transformers
+    , twee-lib
     , unordered-containers
     , vector
     , vector-hashtables
@@ -111,22 +117,23 @@ executable NaiveSolver-exe
     , bytestring
     , containers
     , distributive
-    , express
-    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
     , hashable
+    , indexed
     , kure
+    , leancheck
     , lens
     , mtl
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
-    , speculate
+    , quickspec
     , text
     , transformers
+    , twee-lib
     , unordered-containers
     , vector
     , vector-hashtables
@@ -149,22 +156,23 @@ test-suite NaiveSolver-test
     , bytestring
     , containers
     , distributive
-    , express
-    , extrapolate
     , generic-lens
     , generic-random
     , ghc-prim
     , hashable
+    , indexed
     , kure
+    , leancheck
     , lens
     , mtl
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
-    , speculate
+    , quickspec
     , text
     , transformers
+    , twee-lib
     , unordered-containers
     , vector
     , vector-hashtables

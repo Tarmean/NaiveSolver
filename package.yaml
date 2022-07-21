@@ -41,10 +41,13 @@ dependencies:
 - profunctors
 - distributive
 - pretty-simple
-- express
-- speculate
-- extrapolate
+# - express
+# - speculate
+# - extrapolate
 - leancheck
+- indexed
+- quickspec
+- twee-lib
 library:
   source-dirs: src
 ghc-options:

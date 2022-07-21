@@ -25,6 +25,30 @@ packages:
       sha256: 312593e36891e5ee4664e8362551df6111209c5b6b90c6fc44c4517852cbe637
   original:
     hackage: vector-hashtables-0.1.1.1@sha256:cb4ba4af6b83b6956278bbfe8d0f779a40928728e82977e566c0103fe8d6c867,2725
+- completed:
+    name: quickspec
+    version: 2.1.5
+    git: https://github.com/Tarmean/quickspec
+    pantry-tree:
+      size: 7652
+      sha256: f8606ca6c4f80417768fc71c7a21e909a67df31557d4259061e8f460ed2f5f82
+    commit: 8163afb79f14f105e5bd1aea065f30cdcff88939
+  original:
+    git: https://github.com/Tarmean/quickspec
+    commit: 8163afb79f14f105e5bd1aea065f30cdcff88939
+- completed:
+    subdir: src
+    name: twee-lib
+    version: 2.4.1
+    git: https://github.com/Tarmean/twee
+    pantry-tree:
+      size: 1663
+      sha256: ab0291924509c573f73d8177c7dd85506c0411e74c96ae8d042e502c0037ade7
+    commit: cc0bc1248fc4380a10c9854e504d446951da7091
+  original:
+    subdir: src
+    git: https://github.com/Tarmean/twee
+    commit: cc0bc1248fc4380a10c9854e504d446951da7091
 snapshots:
 - completed:
     size: 554661
