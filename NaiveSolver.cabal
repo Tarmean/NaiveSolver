@@ -74,11 +74,14 @@ library
       GHC2021
   ghc-options: -Wall -Wunused-dependencies -O2
   build-depends:
-      QuickCheck
+      PyF
+    , QuickCheck
     , base >=4.7 && <5
     , bytestring
     , containers
+    , deepseq
     , distributive
+    , foldl
     , generic-lens
     , generic-random
     , ghc-prim
@@ -87,6 +90,7 @@ library
     , kure
     , leancheck
     , lens
+    , mmorph
     , mtl
     , pretty-simple
     , prettyprinter
@@ -113,11 +117,14 @@ executable NaiveSolver-exe
   ghc-options: -Wall -Wunused-dependencies -O2 -O2 -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:
       NaiveSolver
+    , PyF
     , QuickCheck
     , base >=4.7 && <5
     , bytestring
     , containers
+    , deepseq
     , distributive
+    , foldl
     , generic-lens
     , generic-random
     , ghc-prim
@@ -126,6 +133,7 @@ executable NaiveSolver-exe
     , kure
     , leancheck
     , lens
+    , mmorph
     , mtl
     , pretty-simple
     , prettyprinter
@@ -153,11 +161,14 @@ test-suite NaiveSolver-test
   ghc-options: -Wall -Wunused-dependencies -O2 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       NaiveSolver
+    , PyF
     , QuickCheck
     , base >=4.7 && <5
     , bytestring
     , containers
+    , deepseq
     , distributive
+    , foldl
     , generic-lens
     , generic-random
     , ghc-prim
@@ -166,6 +177,7 @@ test-suite NaiveSolver-test
     , kure
     , leancheck
     , lens
+    , mmorph
     , mtl
     , pretty-simple
     , prettyprinter

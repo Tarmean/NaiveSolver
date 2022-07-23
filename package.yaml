@@ -49,6 +49,10 @@ dependencies:
 - quickspec
 - twee-lib
 - zippers
+- mmorph
+- foldl
+- deepseq
+- PyF
 library:
   source-dirs: src
 ghc-options:
