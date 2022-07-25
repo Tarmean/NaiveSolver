@@ -20,6 +20,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE IncoherentInstances #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 module SmartShrink where
 
 import Twee.Pretty
@@ -77,6 +78,7 @@ import Data.Data.Lens (uniplate)
 import Control.Lens.Internal.Indexed (Indexing)
 import System.Timeout (timeout)
 import Control.DeepSeq
+import qualified Monad.Levels as L
 
 replaceWithChild :: (MonadZipper o m, Plated o, Alternative m) => m ()
 replaceWithChild = do
@@ -416,14 +418,125 @@ restrictBiMap :: (Ord k, Ord m) => BiMap m k -> S.Set k -> BiMap m k
 restrictBiMap (BM f m) ks = removeKeys (BM f m) notKs
   where
     notKs = S.fromList (M.keys f) S.\\ ks
-restrictChildren :: Ord k => S.Set k -> M.Map k (S.Set k) -> M.Map k (S.Set k)
-restrictChildren removed m = m''
+keepChildren :: Ord k => S.Set k -> M.Map k (S.Set k) -> M.Map k (S.Set k)
+keepChildren kept m = m''
+  where
+    tab = ML.fromList [(k, undefined) | k <- S.toList kept]
+    m' = M.intersection m tab
+    m'' = M.map (S.intersection kept) m'
+removeChildren :: Ord k => S.Set k -> M.Map k (S.Set k) -> M.Map k (S.Set k)
+removeChildren removed m = m''
   where
     m' = foldr M.delete m removed
     m'' = M.map (S.\\ removed) m'
 
 type Parents m = M.Map m m
 type Children m = M.Map m (S.Set m)
+
+pathFromRoot :: Ord m => Parents m -> m -> [m]
+pathFromRoot parents x = reverse (go x)
+  where
+    go x
+      | Just x' <- M.lookup x parents = x : go x'
+      | otherwise = [x]
+navigator :: (Show k, RecView o m, HasIdx o k, Ord k) => Parents k -> Traversal' o o -> k -> m ()
+navigator pars l = \k -> do
+   let path = pathFromRoot pars k
+       keys = S.fromList path
+    
+       toPath = do
+          k' <- cursors theIdx
+          -- traceM [fmt|toPath {show k'}|]
+          if k' `S.member`  keys
+          then downPath (tail $ dropWhile (/= k') path)
+          else orThrow upBool >> toPath
+       downPath (x:xs) = downTo x *> downPath xs
+       downPath [] = pure ()
+
+       downTo x = do
+           -- traceM [fmt|downTo {show x}|]
+           orThrow (layerDownBool l)
+           mapZipper leftmost
+           let
+             seek = do
+               k <- cursors theIdx
+               -- traceM [fmt|downTo seek {show k}|]
+               if k == x then pure ()
+               else orThrow (pullBool rightward) *> seek
+           seek
+   -- traceM [fmt|navigator path {show path}|]
+   toPath
+
+           
+  
+
+removeNode :: (Alternative m, Eq p, HasIdx o p, RecView o m, Plated o) => (p -> m ()) -> p -> m ()
+removeNode nav k = do
+   nav k
+   replaceWithChild
+
+isRelevant :: (Ord m) => Children m -> m -> (m -> Bool)
+isRelevant c l0 t = flip evalState mempty (go l0)
+  where
+    go f
+      | f == t = pure True
+      | otherwise = do
+          let next = M.findWithDefault mempty f c
+          next <- gets (next S.\\)
+          modify (S.union next)
+          anyM go (S.toList next)
+
+    anyM _ [] = pure False
+    anyM m (x:xs) =
+       m x >>= \case
+         True -> pure True
+         False -> anyM m xs
+
+pickChild :: (MonadZipper o m, Alternative m) => m ()
+pickChild = do
+    pull (Just . leftmost)
+    let loop = pure () <|> (nextTooth rightward loop)
+    loop
+findFirst :: (RecView o m) => Traversal' o o -> m () -> m ()
+findFirst t m = () <$ L.toMaybe loop
+  where loop = lift m <|> L.delay (layerDown t >> pickChild >> loop)
+
+instance MonadZipper o m => MonadZipper o (L.LevelsT m)
+instance RecView o m => RecView o (L.LevelsT m)
+
+
+
+appSearch :: (Monad m, Alternative m) => [p] -> (p -> m ()) -> m ()
+appSearch p0 d = search p0
+  where
+    tryRemove p l r = (mapM_ d p >> l) <|> r
+    search ls =
+       tryRemove ls
+         (pure ())
+         (has_fault ls)
+    has_fault [_] = pure ()
+    has_fault ls = tryRemove l (has_fault r) (has_fault l >> search r)
+      where (l,r) = split ls
+    split ls = splitAt (length ls `div` 2) ls
+
+-- removeSubset :: (MonadZipperI k a m, Alternative m) => m () -> S.Set k -> m ()
+-- removeSubset m fs = do
+--     let
+--       loop ps
+--         | S.null fs = pure ()
+--         | otherwise = do
+--            let (p,ps') = S.deleteFindMin ps
+--            pullI (moveTo p)
+--            m
+--            loop ps'
+--     old <- cursorKey
+--     loop fs
+--     pullI (moveTo old)
+
+ix3 :: Applicative f => ([a] -> f [a]) -> [a] -> f [a]
+ix3 f (a:b:c) = ([a,b]++) <$> f c
+ix3 _ a = pure a
+
 
 fillQuota :: (HasCallStack, Ord m, Show m) => Int -> Parents m -> Children m -> BiMap Int m -> (BiMap Int m, S.Set m, S.Set m)
 fillQuota quota0 parents0 childEdges0 m0 = go mempty mempty quota0 m0
@@ -457,6 +570,42 @@ data BTree a = BT {
  } | Success | LearnCritical a (BTree a) | LearnFalse a  (BTree a)
  deriving (Eq, Ord, Show, Generic, Data, Typeable)
 instance NFData a => NFData (BTree a)
+
+
+shrinkTree :: (RecView o m, HasIdx o k, Ord k, Show k, Alternative m, MonadOracle m) => Traversal' o o -> (o -> o) -> m ()
+shrinkTree l minFor = do
+    deps <- unMergeMap <$> execWriterT (depsMap l)
+    let nav = navigator (flipChildren deps) l
+        focus x = do
+           old <- cursors theIdx
+           -- traceM [fmt|seeking from {show old} to {show x}|]
+           nav x
+        has_conflict c = do
+          if M.size c <= 1
+          then pure ()
+          else do
+              -- traceM [fmt|has conflict: {show c}|]
+              let biMap = mkBiMap c
+                  quota = M.size c `div` 2
+                  (_, roots, consumed) = fillQuota quota (flipChildren c) c biMap
+                  inner = keepChildren consumed c
+                  leftover = removeChildren consumed c
+              -- traceM [fmt|removed roots {show roots}, which killed {show consumed}|]
+              (mapM_ removeOne roots >> checkpoint >> has_conflict leftover) <|> (has_conflict inner >> shrink leftover)
+        shrink x = do
+          -- traceM [fmt|shrinking: {show x}|]
+          mapM_ removeOne roots <|> has_conflict x
+          where roots = rootsFor x
+        removeOne k = focus k >> modifyCursor minFor
+    has_conflict deps
+rootsFor :: Ord m => Children m -> S.Set m
+rootsFor c = S.fromList (M.keys c) S.\\ mconcat (M.elems c)
+
+modifyCursor :: MonadZipper o m => (o -> o) -> m ()
+modifyCursor f = cursor >>= setCursor . f
+
+
+
 mkSearch :: forall m. (Ord m, Show m) => Children m -> BTree (S.Set (m))
 mkSearch children = evalState (runContT (hasFault halfSize) (\_ -> pure Success)) bim0  
   where
@@ -519,6 +668,7 @@ instance HasIdx (Tree k) k where
 
 treeFor :: M.Map Int (S.Set Int)
 treeFor = unMergeMap $ runIdentity $ runShrinkT (Node (1::Int) [Node 2 [], Node 3 [Node 4 [], Node 5 []]]) (\(a,_) -> pure a) (execWriterT $ recursive $ depsMap uniplate) 
+
     
 
 largestNodeSmallerThan :: (HasCallStack, Ord k, Ord v) => k -> M.Map k (S.Set v) -> Maybe (k,v,M.Map k (S.Set v))

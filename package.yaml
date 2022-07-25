@@ -53,6 +53,9 @@ dependencies:
 - foldl
 - deepseq
 - PyF
+- spoon
+- StrictCheck
+- generics-sop
 library:
   source-dirs: src
 ghc-options:

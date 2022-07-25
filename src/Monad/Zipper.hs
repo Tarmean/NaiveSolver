@@ -222,6 +222,22 @@ class (Monad m) => MonadZipper o m | m -> o where
    default withZipper :: (MonadTrans t, m ~ t n, MonadZipper o n, Monad (t n)) => (forall h i. Zipper h i o -> (x, Zipper h i o)) -> m x
    withZipper f = lift (withZipper f)
 
+class (MonadZipper o m) => MonadZipperI i o m | m -> o i where
+   withZipperI :: MonadZipper o m => (forall h. Zipper h i o -> (x, Zipper h i o)) -> m x
+   default withZipperI :: (MonadTrans t, m ~ t n, MonadZipperI i o n, Monad (t n)) => (forall h. Zipper h i o -> (x, Zipper h i o)) -> m x
+   withZipperI f = lift (withZipperI f)
+
+readZipperI :: (MonadZipperI i o m) => (forall h. Zipper h i o -> x) -> m x
+readZipperI f = withZipperI $ \x -> (f x, x)
+cursorKey :: (MonadZipperI i o m) => m i
+cursorKey = readZipperI (\(ZI.Zipper _ _ _ _ i _) -> i)
+pullIBool :: (MonadZipperI i o m) => (forall h. Zipper h i o -> Maybe (Zipper h i o)) -> m Bool
+pullIBool f = withZipperI $ \x -> case f x of
+    Nothing -> (False, x)
+    Just x' -> (True, x')
+pullI :: (Alternative m, MonadZipperI i o m) => (forall h. Zipper h i o -> Maybe (Zipper h i o)) -> m ()
+pullI f = roughly (pullIBool f)
+
 pullBool :: (MonadZipper o m) => (forall h i. Zipper h i o -> Maybe (Zipper h i o)) -> m Bool
 pullBool f = do
    b <- withZipper (\x -> case f x of
@@ -236,6 +252,8 @@ nextTooth :: MonadZipper o m => (forall h i. Zipper h i o -> Maybe (Zipper h i o
 nextTooth f m = pullIf f m (pure ())
 pull :: (MonadZipper o m, Alternative m) => (forall h i. Zipper h i o -> Maybe (Zipper h i o)) -> m ()
 pull l = pullIf l (pure ()) empty
+
+
 left :: (MonadZipper o m, Alternative m) => m ()
 left = pull leftward
 right :: (MonadZipper o m, Alternative m) => m ()
@@ -285,6 +303,12 @@ instance (Monad m) => MonadZipper a (ZipperT (Zipper h i a)  m) where
         let (o, s') = f s
         ZipperT (put s')
         pure o
+instance (Monad m) => MonadZipperI i a (ZipperT (Zipper h i a)  m) where
+    withZipperI f = do
+        s <- ZipperT get
+        let (o, s') = f s
+        ZipperT (put s')
+        pure o
 instance (Monad m) => MonadZipper a (ZipperT (SomeZipper r a) m) where
     cursor = ZipperT $ do
       SomeZipper _ z <- get
@@ -302,6 +326,34 @@ instance (Monad m) => MonadZipper a (ZipperT (SomeZipper r a) m) where
         let (o, s') = f s
         ZipperT (put $ SomeZipper c s')
         pure o
+instance (Monad m) => MonadZipperI Int a (ZipperT (SomeZipper r a) m) where
+    withZipperI f = do
+        SomeZipper c s <- ZipperT get
+        let (o, s') = f s
+        ZipperT (put $ SomeZipper c s')
+        pure o
+
+-- cursorKey :: MonadZipperI i o m => m i
+-- cursorKey = withZipperI $ \ s@(ZI.Zipper _ _ _ _ i _) -> (i, s)
+-- cursorTooth :: MonadZipper o m => m Int
+-- cursorTooth = pull tooth
+
+moveToBool :: MonadZipperI i o m => i -> m Bool
+moveToBool i = do
+   withZipperI (\z -> case moveTo i z of
+        Nothing -> (False, z)
+        Just z' -> (True, z'))
+moveToM :: (Alternative m, MonadZipperI i o m) => i -> m ()
+moveToM = roughly . moveToBool
+
+roughly :: (Alternative m, Monad m) => m Bool -> m ()
+roughly m = do
+   b <- m
+   if b then pure () else empty
+orThrow :: (Monad m, HasCallStack) => m Bool -> m ()
+orThrow m = do
+   b <- m
+   if b then pure () else error "Failed traversal"
 
 readZipper :: MonadZipper o m => (forall h i. Zipper h i o -> x) -> m x
 readZipper f = withZipper (\s -> (f s, s))

@@ -26,6 +26,17 @@ packages:
   original:
     hackage: vector-hashtables-0.1.1.1@sha256:cb4ba4af6b83b6956278bbfe8d0f779a40928728e82977e566c0103fe8d6c867,2725
 - completed:
+    name: StrictCheck
+    version: 0.3.0
+    git: https://github.com/Tarmean/StrictCheck
+    pantry-tree:
+      size: 1722
+      sha256: 7db0eefe12b2efcb272686687419f30f50723eeaab1a966de004c27ec7f56f74
+    commit: 5f2cacbc754edc9f803a66896856c33289849e7f
+  original:
+    git: https://github.com/Tarmean/StrictCheck
+    commit: 5f2cacbc754edc9f803a66896856c33289849e7f
+- completed:
     name: quickspec
     version: 2.1.5
     git: https://github.com/Tarmean/quickspec
