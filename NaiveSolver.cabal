@@ -59,7 +59,10 @@ library
       MinMax
       Monad.Amb
       Monad.ConcreteBreadthFirst
+      Monad.Critical
+      Monad.Graph
       Monad.Levels
+      Monad.Oracle
       Monad.StateT2
       Monad.Zipper
       Optics.Utils

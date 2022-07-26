@@ -25,11 +25,11 @@ import Control.Monad
 
 import Data.Data.Lens
 import Control.Lens
-import SmartShrink (runShrinkForest, shrinkTree, RoseForestT, downwardM, HasIdx(..), MergeMap (unMergeMap), depsMap, isRelevant, flipChildren, navigator)
+import SmartShrink (runShrinkForest, shrinkTree, RoseForestT, downwardM, HasIdx(..), MergeMap (unMergeMap), depsMap, isRelevant, flipChildren, navigator, runVarTFrom, MonadVar (mkVar, setVar), seqForest)
 import Monad.Zipper (recursive, RecView (down), cursors, MonadZipper (cursor), up, pull)
 import qualified Generic.Random.Internal.Generic as G
 import Test.StrictCheck.Shaped
-import Generics.SOP (type (:.:) (Comp), Associativity (..), All)
+import Generics.SOP (type (:.:) (Comp), Associativity (..), All, I (..))
 import Control.Monad.State
 import Generics.SOP.Constraint (Top)
 import Data.Monoid (Endo(..))
@@ -38,6 +38,7 @@ import Generics.SOP.NP
 import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
+import Monad.Critical (evalCritical, evalCriticalT, getCriticals)
 
 data Var = A | B | C | D
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
@@ -63,9 +64,9 @@ instance Arbitrary Expr where
 -- "0#(,) 1#1 2#(3#'a' : 4#5#'b' : 6#7#'c' : 8#[])"
 
 indexTerm :: Shaped a => a -> WithKey % a
-indexTerm = indexTermFrom 0
-indexTermFrom :: Shaped a => Int -> a -> WithKey % a
-indexTermFrom i = flip evalState i . sequenceInterleaved distributeLaw . interleave inj
+indexTerm = fst . indexTermFrom 0
+indexTermFrom :: Shaped a => Int -> a -> (WithKey % a, Int)
+indexTermFrom i0 = flip runState i0 . sequenceInterleaved distributeLaw . interleave inj
   where
     inj a = Comp $ do
        s <- get :: (State Int Int)
@@ -99,6 +100,9 @@ splitF d = match @a d d $ \flat _ ->
 
 data WithKey a = WithKey { getKey :: Int, value :: a }
   deriving (Show, Eq, Ord, Generic, Data, Typeable, Functor, Traversable, Foldable)
+
+getValueFromInterleaved :: Shaped a =>WithKey % a -> a
+getValueFromInterleaved  = fuse value
 
 data SomeTyp f where
    SomeTyp :: (Shaped a) => f % a -> SomeTyp f
@@ -137,9 +141,16 @@ instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) 
     
 
 myShrinkTree :: RoseForestT Identity (WithKey % Expr)
-myShrinkTree = runShrinkForest (indexTerm expr) $ do
+myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runVarTFrom i $ do
   downwardM boxed $ do
     recursive $ do
+        shrinkTree childExpr (\k -> tryReplace k (Var A))
+        s <- getCriticals
+        traceM (show s)
+  where
+    (idxExpr, i) = indexTermFrom 0 expr
+childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
+childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy Expr))
 
         -- let nav k = navigator (flipChildren deps) overChildren k
         -- traceM (show deps)
@@ -157,24 +168,39 @@ myShrinkTree = runShrinkForest (indexTerm expr) $ do
         -- traceM (show  c)
       
       -- navigateTo 
-        shrinkTree overChildren (\k -> tryReplace k (Var A))
 
-tryReplace :: forall a. Shaped a => SomeTyp WithKey -> a -> SomeTyp WithKey
-tryReplace z@(SomeTyp @b (Wrap (WithKey i _))) b = case Typ.eqT @a @b of 
-  Just Refl -> SomeTyp @a (Wrap (unWrap $ indexTermFrom 99 b))
-  Nothing -> z
+tryReplace :: forall a m. (Alternative m, MonadVar m, Shaped a, Eq a) => SomeTyp WithKey -> a -> m (SomeTyp WithKey)
+tryReplace z@(SomeTyp @b a) b = case Typ.eqT @a @b of 
+  Just Refl -> do
+    if fuse value a == b 
+    then pure z
+    else do
+        i <- mkVar
+        let (b', i') = indexTermFrom i b
+        setVar i'
+        pure $ SomeTyp @a b'
+  Nothing -> empty
 unWrap :: (f % a) -> f (Shape a ((%) f))
 unWrap (Wrap a) = a
 
 expr :: Expr
-expr = App (Var A) (App (Var B) (Var C))
--- expr = App (App (Lambda D (App (App (Lambda C (Var D)) (Lambda A (Var B))) (Lambda C (App (Var A) (Var A))))) (Lambda A (App (App (App (Var A) (Var A)) (Lambda A (Var D))) (App (Lambda B (Var A)) (App (Var C) (Var D)))))) (Lambda C (App (App (Lambda A (Lambda A (Var C))) (Lambda A (App (Var D) (Var C)))) (Lambda B (Lambda B (App (Var B) (Var C))))))
+-- expr = z4 -- Lambda A (App (Lambda B (Lambda A (App (Lambda D (Var C)) (Lambda A (Var C))))) (Lambda A (App (App (Lambda D (Var B)) (Lambda B (Var C))) (Lambda A (App (Var B) (Var C))))))
+--   where
+--     vd = Var D
+--     z4 = App z3 z3
+--     z3 = App z2 z2
+--     z2 = App z1 z1
+--     z1 = App vd vd
+-- expr = App (Var D) (App (Var B) (Var C))
+expr = App (App (Lambda D (App (App (Lambda C (Var D)) (Lambda A (Var B))) (Lambda C (App (Var A) (Var A))))) (Lambda A (App (App (App (Var A) (Var A)) (Lambda A (Var D))) (App (Lambda B (Var A)) (App (Var C) (Var D)))))) (Lambda C (App (App (Lambda A (Lambda A (Var C))) (Lambda A (App (Var D) (Var C)))) (Lambda B (Lambda B (App (Var B) (Var C))))))
 size :: Expr -> Int
 size (Lambda _ e) = 1 + size e
 size (App e1 e2) = 1 + size e1 + size e2
 size (Var _) = 1
 propLam :: Expr -> Bool
-propLam lam = size (fromJust $ eval' lam) <= size lam
+propLam lam = case eval' lam of
+  Nothing -> False
+  Just o -> size o <= size lam
 
 
 shrinkWith :: Arbitrary t => (t -> Bool) -> t -> t
@@ -192,7 +218,7 @@ eval' :: Expr -> Maybe Expr
 eval' = briefly . eval mempty
 
 briefly :: NFData p => p -> Maybe p
-briefly x = unsafePerformIO $ fmap (x <$) $ timeout 500000 (x `deepseq` doSomething)
+briefly x = unsafePerformIO $ fmap (x <$) $ timeout 50000 (x `deepseq` doSomething)
 
 {-# NOINLINE doSomething #-}
 doSomething :: IO ()

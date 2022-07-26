@@ -40,6 +40,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Map.Lazy as ML
 import Data.Dynamic
 import GHC.Generics
+import Monad.Oracle
 
 import Data.Typeable
 import qualified Type.Reflection as TR
@@ -79,6 +80,8 @@ import Control.Lens.Internal.Indexed (Indexing)
 import System.Timeout (timeout)
 import Control.DeepSeq
 import qualified Monad.Levels as L
+import Control.Monad.Morph (MFunctor)
+import Monad.Critical (MonadCritical(..), Critical(..))
 
 replaceWithChild :: (MonadZipper o m, Plated o, Alternative m) => m ()
 replaceWithChild = do
@@ -147,6 +150,9 @@ deriving instance MonadZipper o (ShrinkT (SomeZipper r o) x m)
 deriving instance RecView o (ShrinkT (SomeZipper r o) x m)
 instance (Zipping h o) => HasRec o (ShrinkT (Zipper h Int o) x m) (ShrinkT (SomeZipper (Zipper h Int o) o) x m) where
     recursive (ShrinkT m) = ShrinkT $ recursive m
+instance MonadCritical k m => MonadCritical k (ShrinkT r o m)
+instance MonadCritical k m => MonadCritical k (VarT m)
+
 
 instance (Ord idx, Ord idx1, zip ~ Zipper h idx1 o, zip2 ~ Zipper zip idx i) => HasView (ShrinkT zip r m) (ShrinkT zip2 r m) o i idx where
    idownwardM l m = ShrinkT $ idownwardM l (unShrink m)
@@ -171,6 +177,12 @@ newtype RoseForestT m a = RoseF { unForestT :: m (RoseCell m a)}
 deriving instance (Show (m (RoseCell m a)), Show a) => Show (RoseForestT m a)
 data RoseCell m a = RoseNil | RoseCell a (RoseForestT m a) (RoseForestT m a)
   deriving (Functor)
+
+traceForest :: (o -> Bool) -> RoseForestT Identity o -> [(Bool,o)]
+traceForest p (RoseF m) = go (runIdentity m)
+  where
+      go RoseNil = []
+      go (RoseCell o l r) = if p o then (True, o) : traceForest p l else (False,o) : traceForest p r
 
 printRose :: Show a => RoseForestT Identity a  -> IO ()
 printRose r0 = putStrLn $ unlines $ go 0 r0 []
@@ -202,19 +214,25 @@ instance Applicative m => Alternative (RoseCell m) where
   (RoseCell a l m) <|> r = RoseCell a l (RoseF $ fmap (<|> r) $ unForestT m )
   
 class Monad m => MonadVar m where
-    mkVar :: QT.Type -> m Var
-    default mkVar :: (m ~ t n, MonadTrans t, MonadVar n) => QT.Type -> m Var
-    mkVar = lift . mkVar
+    mkVar :: m Int
+    default mkVar :: (m ~ t n, MonadTrans t, MonadVar n) => m Int
+    mkVar = lift mkVar
+    setVar :: Int -> m ()
+    default setVar :: (m ~ t n, MonadTrans t, MonadVar n) => Int -> m ()
+    setVar = lift . setVar
 runVarT :: Monad m => VarT m a -> m a
 runVarT (VarT m) = evalStateT m 0
+runVarTFrom :: Monad m => Int -> VarT m a -> m a
+runVarTFrom idx (VarT m) = evalStateT m idx
 
 instance MonadVar m => MonadVar (ZipperT zip m)
 instance MonadVar m => MonadVar (StateT o m)
 newtype VarT m a = VarT { unVarT :: StateT Int m a }
-  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle)
+  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor)
 instance MonadZipper o m => MonadZipper o (VarT m) where
+instance RecView o n => RecView o  (VarT n)
+instance HasRec o m n => HasRec o (VarT m) (VarT n)
 instance HasView m n o i idx => HasView (VarT m) (VarT n) o i idx where
-    idownwardM l m  = VarT $ StateT $ \i -> idownwardM l (runStateT (unVarT m) i)
     iwithinM l m  = VarT $ StateT $ \i -> fmap (swizzle i) $ iwithinM l (fmap inj $ runStateT (unVarT m) i)
       where
         -- swizzle f Nothing = (Nothing, f)
@@ -226,19 +244,14 @@ instance MonadState s m => MonadState s (VarT m) where
   get = VarT (lift get)
   put = VarT . lift . put
 instance Monad m => MonadVar (VarT m) where
-    mkVar t = VarT $ do
+    mkVar = VarT $ do
       i <- get
       put (i+1)
-      pure (V t i)
+      pure i
+    setVar = VarT . put
 instance (Monoid o, MonadVar m) => MonadVar (WriterT o m)
 -- class MonadZipper o m => MonadExtract m o | m -> o where
     
-class Monad m => MonadOracle m where
-    checkpoint :: m ()
-    default checkpoint :: (m ~ t n, MonadTrans t, MonadOracle n) => m ()
-    checkpoint = lift checkpoint
-instance MonadOracle m => MonadOracle (StateT s m)
-instance (Monoid s, MonadOracle m) => MonadOracle (WriterT s m)
 
 -- (doRewrite >> checkPoint ) `orElse` doNothing
 
@@ -260,6 +273,13 @@ instance (Zipping h o, r ~ Zipped h o, Monad m) => MonadOut o r (ShrinkT (Zipper
 instance (Monad m, TopZip (SomeZipper h o) ~ r, ReZipping (SomeZipper h o)) => MonadOut o r (ShrinkT (SomeZipper h o) x m) where
     getOut = ShrinkT getOut
     withZipper' f = ShrinkT  (withZipper' f)
+
+seqForest :: Monad m => RoseForestT m a -> m (RoseForestT Identity a)
+seqForest (RoseF m) = fmap (RoseF . Identity) . go =<< m
+  where
+    go RoseNil = pure RoseNil
+    go (RoseCell c m r) = RoseCell c <$> seqForest m <*> seqForest r
+
 
 runShrinkForest :: (Monad m) => x -> ShrinkT (Top :>> x) (RoseForestT m x) m a -> RoseForestT m x
 runShrinkForest o m = joinForest $ runShrinkT o (\(_,a) -> pure empty) m
@@ -324,9 +344,9 @@ instance MkExpr Int  where
            -- intoField @0 $ do
 -- test2 :: [Expr]
 
-test2 ::RoseForestT Identity (Bin Int Constant)
-test2 = runShrinkForest (mkIndices $ expr (1::Int,[2::Int,1,3], "xxy"::String)) $ runVarT $ do
-    varUniqs @Int (ileafs . filtered notFunctionType)
+-- test2 ::RoseForestT Identity (Bin Int Constant)
+-- test2 = runShrinkForest (mkIndices $ expr (1::Int,[2::Int,1,3], "xxy"::String)) $ runVarT $ do
+--     varUniqs @Int (ileafs . filtered notFunctionType)
 
 
 test3 :: [(Int, String)]
@@ -365,13 +385,6 @@ depsMap l = do
      depsMap l
   where tellDep k v = tell (MergeMap $ M.singleton k (S.singleton v))
 
-data FlatTree ids = FT {
-  node_sizes_transitive :: M.Map ids Int,
-  node_children :: M.Map ids (S.Set ids),
-  unremovable_nodes :: S.Set ids,
-  transitive_important_nodes :: S.Set ids
- }
- deriving (Eq, Ord, Show)
 transitive :: Ord ids => ids -> M.Map ids (S.Set ids) -> S.Set ids
 transitive x0 m = go S.empty (S.singleton x0)
   where
@@ -397,15 +410,16 @@ data BiMap m k = BM {
  deriving (Eq, Ord, Show)
 
 removeKeys :: (Ord k, Ord m) => BiMap m k -> S.Set k -> BiMap m k
-removeKeys (BM f m) ks = BM (foldl' (flip M.delete) f ks) (M.mapMaybe (delMaybe ks) m)
+removeKeys (BM f m) ks = BM (foldl' (flip M.delete) f ks) (delMaybe ks m)
   where
-delMaybe :: Ord a => S.Set a -> S.Set a -> Maybe (S.Set a)
-delMaybe ks x = let m' = x S.\\ ks in if S.null m' then Nothing else Just m'
+delMaybe :: (Ord k, Ord a) => S.Set a -> M.Map k (S.Set a) -> M.Map k (S.Set a)
+delMaybe ks = M.mapMaybe f
+  where f x = let m' = x S.\\ ks in if S.null m' then Nothing else Just m'
 
 reduceKeys :: (Ord k, Ord m, Num m) => m -> BiMap m k -> S.Set k -> BiMap m k
 reduceKeys i (BM f m) ks = BM (foldr (M.adjust (\x -> x - i)) f ks) (M.unionWith (<>) oldVals m')
   where
-    m' = (M.mapMaybe (delMaybe ks) m)
+    m' = delMaybe ks m
     oldVals = M.fromListWith (<>) [(x - i, S.singleton  k) | k <- S.toList ks, Just x <- [f M.!? k]]
 
 mkBiMap :: Ord ids => M.Map ids (S.Set ids) -> BiMap Int ids
@@ -414,8 +428,8 @@ mkBiMap m = BM sizes revSizes
     sizes = M.fromList [(x,1) | x <- S.toList leafOnly] <> ML.fromList [(x, (1::Int)+sum ls) | (x, vs) <- M.toList m, let ls = map  (sizes !!!) (S.toList vs)]
     leafOnly = mconcat (M.elems m) S.\\ S.fromList (M.keys m)
     revSizes = M.fromListWith (<>) [(x, S.singleton k) | (k, x) <- M.toList sizes]
-restrictBiMap :: (Ord k, Ord m) => BiMap m k -> S.Set k -> BiMap m k
-restrictBiMap (BM f m) ks = removeKeys (BM f m) notKs
+removeBiMap :: (Ord k, Ord m) => BiMap m k -> S.Set k -> BiMap m k
+removeBiMap (BM f m) ks = removeKeys (BM f m) notKs
   where
     notKs = S.fromList (M.keys f) S.\\ ks
 keepChildren :: Ord k => S.Set k -> M.Map k (S.Set k) -> M.Map k (S.Set k)
@@ -423,12 +437,12 @@ keepChildren kept m = m''
   where
     tab = ML.fromList [(k, undefined) | k <- S.toList kept]
     m' = M.intersection m tab
-    m'' = M.map (S.intersection kept) m'
+    m'' = M.filter (not . S.null) $ M.map (S.intersection kept) m'
 removeChildren :: Ord k => S.Set k -> M.Map k (S.Set k) -> M.Map k (S.Set k)
 removeChildren removed m = m''
   where
     m' = foldr M.delete m removed
-    m'' = M.map (S.\\ removed) m'
+    m'' = delMaybe removed m'
 
 type Parents m = M.Map m m
 type Children m = M.Map m (S.Set m)
@@ -538,20 +552,36 @@ ix3 f (a:b:c) = ([a,b]++) <$> f c
 ix3 _ a = pure a
 
 
-fillQuota :: (HasCallStack, Ord m, Show m) => Int -> Parents m -> Children m -> BiMap Int m -> (BiMap Int m, S.Set m, S.Set m)
-fillQuota quota0 parents0 childEdges0 m0 = go mempty mempty quota0 m0
+fillQuota' :: (Ord m, Show m) => Int -> Children m -> ([(m, S.Set m)], (Int, BiMap Int m))
+fillQuota' quota childs = fillQuota defPred quota pars childs bim
+  where
+   pars = flipChildren childs
+   bim = mkBiMap childs
+   defPred (s,_) = s > 1
+fillQuota :: (HasCallStack, Ord m, Show m) => ((Int, m) -> Bool) -> Int -> Parents m -> Children m -> BiMap Int m -> ([(m, S.Set m)], (Int, BiMap Int m))
+fillQuota p quota0 parents0 childEdges0 m0 = out
   where
     parents = M.intersection parents0 (fst_map m0)
     liveIds = S.fromList (M.keys $ fst_map m0)
     childEdges = M.map (S.intersection liveIds) $ M.intersection childEdges0 (fst_map m0)
-    go consumed seen 0 m = (m, seen, consumed)
-    go consumed seen quota m = go (S.union consumed newlyTaken) (S.insert v seen) (quota - k) m''
-      where
-        (k,v,snd_map') = case largestNodeSmallerThan quota (snd_map m) of
-          Nothing -> error ("Partial largestNodeSmallerThan " <> show m0 <> ", " <> show quota0)
-          Just o -> o
-        m' = m { snd_map = snd_map' }
-        (m'', newlyTaken)  = useKey v k childEdges parents  m'
+    out = unfoldrWithOut (fillQuota1 p (childEdges, parents)) (quota0, m0)
+
+unfoldrWithOut :: (s -> Maybe (a, s)) -> s -> ([a], s)
+unfoldrWithOut f = go []
+  where
+    go acc s = case f s of
+        Nothing -> (reverse acc, s)
+        Just (a, s') -> go (a:acc) s'
+    -- go consumed seen 1 m = (m, seen, consumed)
+type Graph m = (Children m, Parents m)
+fillQuota1 :: (Ord b, Show b)=> ((Int, b) -> Bool) -> Graph b -> (Int, BiMap Int b) -> Maybe ((b, S.Set b), (Int, BiMap Int b))
+fillQuota1 _ (_, _) (0, _) = Nothing
+fillQuota1 p (childEdges, parents) (quota, m) = case dropWhile (not . p) (largestNodeSmallerThan (quota+1) m) of
+    [] -> Nothing
+    (k,v):_ -> let (m'', newlyTaken) = useKey v (k-1) childEdges parents m
+                   -- !_ = trace [fmt|fill quota go {show m}, for quota {quota}, step {k-1}, new root{show v}, blocks {show newlyTaken}|] ()
+               in Just ((v, newlyTaken), (quota - k+1, m''))
+        
 useKey :: Ord m => m -> Int -> Children m -> Parents m -> BiMap Int m -> (BiMap Int m, S.Set m)
 useKey v val childEdges parents m = (remove (reduce m), usedNodes)
   where
@@ -571,33 +601,118 @@ data BTree a = BT {
  deriving (Eq, Ord, Show, Generic, Data, Typeable)
 instance NFData a => NFData (BTree a)
 
+type GraphState m = (BiMap Int m, Children m, Parents m)
+shrinkTree1 :: (RecView o m, HasIdx o k, Ord k, Show k, Alternative m, MonadOracle m, MonadCritical k m) => Traversal' o o -> (k -> m Bool) -> m Bool
+shrinkTree1 l removeOne = do
+    deps <- unMergeMap <$> execWriterT (depsMap l)
+    let par0 = flipChildren deps
+        theForbidden = do
+              crits <- getCriticals
+              pure $ crits <> foldMap (flip transitive1 par0) crits
+        has_conflict c biMap = case M.toList (fst_map biMap) of
+            [(a,_)] -> markCritical a
+            _ ->  do
+              let 
+                  quota = rootSizes c biMap `div` 2
+                  pars = flipChildren c
+              forbidden <- theForbidden
+              let
+                  (steps, (_, bimapRight)) = fillQuota (\(s,k) -> s > 1 && S.notMember k forbidden) quota pars c biMap
+                  roots = fmap fst steps
+                  stepMap = M.fromList steps
+                  consumedFor used = mconcat [ stepMap M.! u | u <- used  ]
+                  consumed = consumedFor roots
+                  -- FIXME: the conflict part could use more information about which removals succeeded?
+                  inner = keepChildren consumed c
 
-shrinkTree :: (RecView o m, HasIdx o k, Ord k, Show k, Alternative m, MonadOracle m) => Traversal' o o -> (o -> o) -> m ()
+                  bimapDown = removeBiMap biMap consumed 
+              if (null steps)
+              then do
+                mapM_ markCritical (rootsFor c)
+              else
+                (do
+                    _ <- filterM removeOne roots
+                    checkpoint
+                    let leftover = removeChildren (consumedFor roots) c
+                    has_conflict leftover bimapRight
+                ) <|> (has_conflict inner bimapDown)
+        shrink x bm = do
+          forbidden <- theForbidden
+          let toTest = (roots S.\\ forbidden)
+          if S.null toTest
+          then pure False
+          else
+            (do
+                o <- filterM removeOne (S.toList toTest)
+                if null o
+                then pure False
+                else checkpoint *> pure True
+            ) <|> (True <$ has_conflict x bm)
+          where roots = rootsFor x
+    shrink deps (mkBiMap deps)
+
+
+shrinkTree :: (RecView o m, HasIdx o k, Ord k, Show k, Alternative m, MonadOracle m, MonadCritical k m) => Traversal' o o -> (o -> m o) -> m ()
 shrinkTree l minFor = do
     deps <- unMergeMap <$> execWriterT (depsMap l)
     let nav = navigator (flipChildren deps) l
         focus x = do
-           old <- cursors theIdx
+           -- old <- cursors theIdx
            -- traceM [fmt|seeking from {show old} to {show x}|]
            nav x
-        has_conflict c = do
-          if M.size c <= 1
-          then pure ()
-          else do
+        par0 = flipChildren deps
+        theForbidden = do
+              crits <- getCriticals
+              pure $ crits <> foldMap (flip transitive1 par0) crits
+        has_conflict c biMap = do
+          case M.toList c of
+            [(a,_)] -> markCritical a -- *> traceM [fmt|has conflict done {show biMap}|]
+            _ ->  do
               -- traceM [fmt|has conflict: {show c}|]
-              let biMap = mkBiMap c
-                  quota = M.size c `div` 2
-                  (_, roots, consumed) = fillQuota quota (flipChildren c) c biMap
+              let 
+                  quota = rootSizes c biMap `div` 2
+                  pars = flipChildren c
+              forbidden <- theForbidden
+              let
+                  (steps, (_, bimapRight)) = fillQuota (\(s,k) -> s > 1 && S.notMember k forbidden) quota pars c biMap
+                  roots = S.fromList $ fmap fst steps
+                  consumed = foldMap snd steps
                   inner = keepChildren consumed c
                   leftover = removeChildren consumed c
-              -- traceM [fmt|removed roots {show roots}, which killed {show consumed}|]
-              (mapM_ removeOne roots >> checkpoint >> has_conflict leftover) <|> (has_conflict inner >> shrink leftover)
-        shrink x = do
+                  bimapDown = removeBiMap biMap consumed
+              -- traceM [fmt| forbidden {show forbidden}|]
+              if (null steps)
+              then do
+                let roots = rootsFor c
+                mapM_ markCritical roots
+                -- traceM [fmt|no shrinks left  {show biMap}|]
+              else do
+                -- traceM [fmt|has conflict, quota {quota}, active {show $ fst_map biMap} subgraph {show c}|]
+                -- traceM [fmt|has conflict, try removing {show steps}|]
+                -- traceM [fmt|has conflict, leftover {show leftover} {show bimapRight}|]
+                -- traceM [fmt|has conflict, inner {show inner}|]
+                (mapM_ removeOne roots >> checkpoint >> has_conflict leftover bimapRight) <|> (has_conflict inner bimapDown >> shrink leftover bimapRight)
+        shrink x bm = do
           -- traceM [fmt|shrinking: {show x}|]
-          mapM_ removeOne roots <|> has_conflict x
+          forbidden <- theForbidden
+          let toTest = (roots S.\\ forbidden)
+          -- traceM [fmt|shrinking: {show toTest} crits: {show crits} forbidden: {show forbidden}|]
+          if S.null toTest
+          then has_conflict x bm
+          else (mapM_ removeOne  toTest *> checkpoint) <|> has_conflict x bm
           where roots = rootsFor x
-        removeOne k = focus k >> modifyCursor minFor
-    has_conflict deps
+        removeOne k = do
+          focus k
+          o <- cursor
+          o' <- minFor o
+          setCursor o'
+          -- (checkpoint *> empty) <|> pure ()
+    shrink deps (mkBiMap deps)
+
+rootSizes :: Ord k => Children k -> BiMap Int k -> Int
+rootSizes c b = sum [ M.findWithDefault 1 r (fst_map b) |  r <- S.toList roots]
+  where
+    roots = rootsFor c
 rootsFor :: Ord m => Children m -> S.Set m
 rootsFor c = S.fromList (M.keys c) S.\\ mconcat (M.elems c)
 
@@ -606,51 +721,8 @@ modifyCursor f = cursor >>= setCursor . f
 
 
 
-mkSearch :: forall m. (Ord m, Show m) => Children m -> BTree (S.Set (m))
-mkSearch children = evalState (runContT (hasFault halfSize) (\_ -> pure Success)) bim0  
-  where
-    pars = flipChildren children
-    bim0 = mkBiMap children
-    halfSize = (M.size (fst_map bim0))
-    allNodes = S.fromList $ M.keys $ fst_map bim0
-    
-
-    hasFault :: Int -> ContT (BTree (S.Set (m))) (State (BiMap Int m))  ()
-    hasFault 0 = pure () -- get >>= \s -> traceM [fmt|zero quota {show s}|]
-    hasFault q = do
-        m <- get
-        -- traceM [fmt|hasFault state {show m}, quota {q}|]
-        case M.toList (fst_map m) of
-          [] -> pure ()
-          [(p,pv)] -> do
-              -- traceM [fmt|singleton {show p}, size {pv}, for quota {q}|]
-              ContT $ \k -> (LearnCritical (S.singleton p) <$> (k ()))
-          _ -> do
-            let q_half = q - (q `div` 2)
-            let (mPost, k', affectedNodes) = fillQuota q_half pars children m
-            -- traceM [fmt|post fillQuota {show mPost}, quota {q}, picked {show k'}, affectedNodes {show affectedNodes}|]
-            let mInner = restrictBiMap m affectedNodes
-            -- let after = modify (flip removeKeys affectedNodes)
-            ContT $ \c -> do
-                let with s mo = put s *> mo
-                let execWith s mo = runState (runContT mo c) s
-                let
-                  onFailure = do
-                    -- traceM [fmt|onFailure {show mInner}, affected {show affectedNodes}, orig {show m}, post {show mPost}|]
-                    with mInner (hasFault q_half)
-                    with mPost (maybeFault (q - q_half))
-                let onSuc = fst $ execWith mPost (hasFault (q - q_half))
-                let onFail = fst $ execWith m onFailure
-                pure $ BT affectedNodes q onSuc onFail 
-    maybeFault :: Int -> ContT (BTree (S.Set (m))) (State (BiMap Int m))  ()
-    maybeFault i = do
-        m <- get
-        ContT $ \c -> do
-            let l = evalState (c ()) m
-            let r = evalState (runContT (hasFault i) c ) m
-            pure $ BT (S.fromList $ M.keys $ fst_map m) (M.size $ fst_map m) l r
 briefly :: NFData p => p -> IO (Maybe p)
-briefly x = fmap (x <$) $ timeout 5000000 (x `deepseq` print "hi")
+briefly x = fmap (x <$) $ timeout 50000000 (x `deepseq` print "hi")
 -- todo: track whether we are in a binary search
 -- half the quota from the get-go if so
 
@@ -671,22 +743,12 @@ treeFor = unMergeMap $ runIdentity $ runShrinkT (Node (1::Int) [Node 2 [], Node 
 
     
 
-largestNodeSmallerThan :: (HasCallStack, Ord k, Ord v) => k -> M.Map k (S.Set v) -> Maybe (k,v,M.Map k (S.Set v))
-largestNodeSmallerThan k m 
-  | M.null m = Nothing
-  | otherwise = Just (theKey, theVal, m')
+largestNodeSmallerThan :: (HasCallStack, Ord k) => Int -> BiMap Int k -> [(Int, k)]
+largestNodeSmallerThan k (BM _ m)  = concatMap flattening out
   where
-    theKey
-      | M.member k m = k
-      | otherwise = maxKey (fst (M.split k m))
-    theSet = m !!! theKey
-    (theVal, theSet') = S.deleteFindMin theSet
-    m' = if S.null theSet'
-         then M.delete theKey m
-         else M.insert theKey theSet' m
-    maxKey ms = case M.minViewWithKey ms of
-       Nothing -> error "map checked for emptiness, should have nodes with size=1"
-       Just ((k',_),_) -> k'
+    flattening (i,s) = (i,) <$> S.toList s
+    
+    out = (k,M.findWithDefault mempty k m) : M.toDescList (fst (M.split k m))
 
 (!!!) :: (Ord k, HasCallStack) => M.Map k a -> k -> a
 m !!! k = case M.lookup k m of
@@ -788,18 +850,18 @@ groupedView v k m = do
    forM_ (S.fromList (map k ks)) $ \theKey -> do
        iwithinM (v . filtered (\x -> k x == theKey)) (m theKey)
 
-varUniqs :: forall idx m n o. (
-    HasView m n o (Either Var Constant) idx,
-    Alternative n,
-    MonadVar n,
-    MonadOracle n
- ) => IndexedTraversal' idx  o (Either Var Constant) -> m ()
-varUniqs p = groupedView @idx p id $ \k -> do
-    s <- readZipper teeth
-    when (s > 1) $ try $ do
-        v <- mkVar (typ k)
-        mapNeighborhood $ (\_ -> Left v)
-        checkpoint
+-- varUniqs :: forall idx m n o. (
+--     HasView m n o (Either Var Constant) idx,
+--     Alternative n,
+--     MonadVar n,
+--     MonadOracle n
+--  ) => IndexedTraversal' idx  o (Either Var Constant) -> m ()
+-- varUniqs p = groupedView @idx p id $ \k -> do
+--     s <- readZipper teeth
+--     when (s > 1) $ try $ do
+--         v <- mkVar (typ k)
+--         mapNeighborhood $ (\_ -> Left v)
+--         checkpoint
 
 notFunctionType :: Typed a => a -> Bool
 notFunctionType v = case typ v of
@@ -887,6 +949,7 @@ instance (Applicative m, Monoid r) => MonadFail (ShrinkT o r m) where
 instance (Monoid r, Applicative m) => MonadPlus (ShrinkT o r m) where
     mzero = empty
     mplus = (<|>)
+
 
 -- consArg :: forall t m k o x. (o ~ Bin k x, Typeable t, MonadZipper o m, Alternative m, Typed o) => t -> Int -> m ()
 -- consArg t i = do

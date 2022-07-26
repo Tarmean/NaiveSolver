@@ -1,7 +1,9 @@
 module Lib
     ( someFunc
     ) where
-import qualified EGraph.SimpleEgg as Data.SimpleEgg
 
+import qualified Text.Pretty.Simple as P
+import SmartShrinkTest (prettyWithKey, myShrinkTree, propLam, getValueFromInterleaved)
+import SmartShrink (traceForest)
 someFunc :: IO ()
-someFunc = Data.SimpleEgg.batchTest
+someFunc = mapM_ print $ fmap (fmap prettyWithKey) $ traceForest (not . propLam . getValueFromInterleaved) $  myShrinkTree

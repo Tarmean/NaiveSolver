@@ -159,7 +159,11 @@ layerDown p = layerDownBool p >>= \case
 
 class (MonadZipper o m, MonadZipper i n) => HasView m n o i idxI | m idxI i -> n, n -> m, n -> idxI where
     idownwardM :: IndexedLens' idxI o i -> n a -> m a
+    default idownwardM :: (n ~ t r, m ~ t l, MFunctor t, HasView l r o i idxI) => IndexedLens' idxI o i -> n a -> m a
+    idownwardM l m = hoist (idownwardM l) m
     iwithinM :: Monoid t => IndexedTraversal' idxI o i -> n t -> m t
+    -- default iwithinM :: (n ~ t r, m ~ t l, MFunctor t, HasView l r o i idxI) => IndexedTraversal' idxI o i -> n a -> m (Maybe a)
+    -- iwithinMOr l m = hoist (\x -> iwithinM l x) m
 instance (zip2~ (Zipper zip idxI i), Ord idxI, Ord idxO, Monad m, zip ~ Zipper h idxO o) => HasView (ZipperT zip m) (ZipperT zip2  m) o i idxI where
     idownwardM l n = do
         s <- ZipperT get
