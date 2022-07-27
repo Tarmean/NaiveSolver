@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE LambdaCase #-}
 module SmartShrinkTest where
 import Data.Data (Data, Typeable)
 import GHC.Generics (Generic)
@@ -39,24 +40,28 @@ import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
 import Monad.Critical (evalCritical, evalCriticalT, getCriticals)
+import ShrinkLoop (replaceNode, doShrink)
+import Monad.Graph (MonadGraphMut (addDeps), runGraphT)
+import Monad.Oracle (MonadOracle, checkpoint)
+import Monad.Snapshot
 
 data Var = A | B | C | D
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
-data Expr = Lambda Var Expr | App Expr Expr | Var Var
+data Expr = Lambda Var Expr | App Expr Expr | Var Var | Hole
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
 instance SOP.Generic Var
 instance SOP.HasDatatypeInfo Var
-instance SOP.HasDatatypeInfo Expr
-instance Shaped Var
 instance SOP.Generic Expr
+instance SOP.HasDatatypeInfo Expr
 instance Shaped Expr
+instance Shaped Var
 instance NFData Var
 instance NFData Expr
 instance Arbitrary Var where
    arbitrary = genericArbitrary uniform
    -- shrink = genericShrink
 instance Arbitrary Expr where
-   arbitrary = genericArbitraryRec (1 G.% 1 G.% 0 G.% ()) `withBaseCase` oneof [fmap Var arbitrary]
+   arbitrary = genericArbitraryRec (1 G.% 1 G.% 0 G.% 0 G.% ()) `withBaseCase` oneof [fmap Var arbitrary, pure Hole]
    shrink = genericShrink
 
 
@@ -139,14 +144,26 @@ instance HasIdx (WithKey a) Int where
 instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) o where
   theIdx (SomeTyp (Wrap f)) = theIdx f
     
+myShrinker :: (MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m) => m Bool
+myShrinker = doShrink $ replaceNode (\k -> tryReplace k Hole) childExpr
 
 myShrinkTree :: RoseForestT Identity (WithKey % Expr)
-myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runVarTFrom i $ do
+myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runGraphT $ runVarTFrom i $ do
   downwardM boxed $ do
     recursive $ do
-        shrinkTree childExpr (\k -> tryReplace k (Var A))
-        s <- getCriticals
-        traceM (show s)
+        checkpoint
+        d <- depsMap childExpr
+        addDeps d
+        let
+          loop = do
+            myShrinker >>= \case
+              True -> loop
+              False -> pure ()
+        loop
+        -- shrinkTree childExpr (\k -> tryReplace k (Var A))
+        -- s <- getCriticals
+        -- traceM (show s)
+        pure ()
   where
     (idxExpr, i) = indexTermFrom 0 expr
 childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
@@ -169,9 +186,10 @@ childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: pro
       
       -- navigateTo 
 
-tryReplace :: forall a m. (Alternative m, MonadVar m, Shaped a, Eq a) => SomeTyp WithKey -> a -> m (SomeTyp WithKey)
+tryReplace :: forall a m. (Show a, Alternative m, MonadVar m, Shaped a, Eq a) => SomeTyp WithKey -> a -> m (SomeTyp WithKey)
 tryReplace z@(SomeTyp @b a) b = case Typ.eqT @a @b of 
   Just Refl -> do
+    traceM ("replacing " <> prettyWithKey a <> " with " <> show b)
     if fuse value a == b 
     then pure z
     else do
@@ -196,7 +214,7 @@ expr = App (App (Lambda D (App (App (Lambda C (Var D)) (Lambda A (Var B))) (Lamb
 size :: Expr -> Int
 size (Lambda _ e) = 1 + size e
 size (App e1 e2) = 1 + size e1 + size e2
-size (Var _) = 1
+size _ = 1
 propLam :: Expr -> Bool
 propLam lam = case eval' lam of
   Nothing -> False
@@ -218,7 +236,7 @@ eval' :: Expr -> Maybe Expr
 eval' = briefly . eval mempty
 
 briefly :: NFData p => p -> Maybe p
-briefly x = unsafePerformIO $ fmap (x <$) $ timeout 50000 (x `deepseq` doSomething)
+briefly x = unsafePerformIO $ fmap (x <$) $ timeout 500000 (x `deepseq` doSomething)
 
 {-# NOINLINE doSomething #-}
 doSomething :: IO ()

@@ -63,6 +63,7 @@ library
       Monad.Graph
       Monad.Levels
       Monad.Oracle
+      Monad.Snapshot
       Monad.StateT2
       Monad.Zipper
       Optics.Utils

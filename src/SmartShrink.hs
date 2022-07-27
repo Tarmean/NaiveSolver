@@ -21,6 +21,7 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE IncoherentInstances #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module SmartShrink where
 
 import Twee.Pretty
@@ -80,8 +81,9 @@ import Control.Lens.Internal.Indexed (Indexing)
 import System.Timeout (timeout)
 import Control.DeepSeq
 import qualified Monad.Levels as L
-import Control.Monad.Morph (MFunctor)
+import Control.Monad.Morph (MFunctor (hoist))
 import Monad.Critical (MonadCritical(..), Critical(..))
+import Monad.Snapshot (MonadSnapshot)
 
 replaceWithChild :: (MonadZipper o m, Plated o, Alternative m) => m ()
 replaceWithChild = do
@@ -142,9 +144,10 @@ instance (Pretty f, Pretty a) => Pretty (Bin f a) where
   pPrint (Leaf _ a) = pPrint a
   pPrint (IVar _ v) = pPrint v
 
--- newtype ShrinkT x o (r::Type) m a = ShrinkT { unShrink :: ZipperT x o (ContT r m) a }
 newtype ShrinkT o (r::Type) m a = ShrinkT { unShrink :: ZipperT o (ContT r m) a }
-  deriving (Functor, Applicative, Monad)
+  deriving (Functor, Applicative, Monad, MonadSnapshot)
+-- instance MFunctor (ShrinkT o r) where
+--   hoist f (ShrinkT m) = ShrinkT (hoist (hoist f) m)
 deriving instance MonadZipper o (ShrinkT (Zipper h i o) r m)
 deriving instance MonadZipper o (ShrinkT (SomeZipper r o) x m)
 deriving instance RecView o (ShrinkT (SomeZipper r o) x m)
@@ -228,7 +231,7 @@ runVarTFrom idx (VarT m) = evalStateT m idx
 instance MonadVar m => MonadVar (ZipperT zip m)
 instance MonadVar m => MonadVar (StateT o m)
 newtype VarT m a = VarT { unVarT :: StateT Int m a }
-  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor)
+  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor, MonadSnapshot)
 instance MonadZipper o m => MonadZipper o (VarT m) where
 instance RecView o n => RecView o  (VarT n)
 instance HasRec o m n => HasRec o (VarT m) (VarT n)
@@ -376,14 +379,19 @@ eachChild l m = do
       let loops = m >> nextTooth rightward loops
       loops
 
-depsMap :: (RecView o m, HasIdx o k, Ord k) => Traversal' o o -> WriterT (MergeMap k (S.Set k)) m ()
-depsMap l = do
-   parent <- cursor
-   eachChild l $ do
-     child <- cursor
-     tellDep (theIdx parent) (theIdx child)
-     depsMap l
-  where tellDep k v = tell (MergeMap $ M.singleton k (S.singleton v))
+depsMap :: (RecView o m, HasIdx o k, Ord k) => Traversal' o o ->  m (M.Map k (S.Set k))
+depsMap l = fmap (unMergeMap) $ execWriterT $ do
+    root <- cursors theIdx
+    tell (MergeMap $ M.singleton root S.empty)
+    go
+  where
+    go = do
+       parent <- cursor
+       eachChild l $ do
+         child <- cursor
+         tellDep (theIdx parent) (theIdx child)
+         go
+    tellDep k v = tell (MergeMap $ M.singleton k (S.singleton v))
 
 transitive :: Ord ids => ids -> M.Map ids (S.Set ids) -> S.Set ids
 transitive x0 m = go S.empty (S.singleton x0)
@@ -604,7 +612,7 @@ instance NFData a => NFData (BTree a)
 type GraphState m = (BiMap Int m, Children m, Parents m)
 shrinkTree1 :: (RecView o m, HasIdx o k, Ord k, Show k, Alternative m, MonadOracle m, MonadCritical k m) => Traversal' o o -> (k -> m Bool) -> m Bool
 shrinkTree1 l removeOne = do
-    deps <- unMergeMap <$> execWriterT (depsMap l)
+    deps <- depsMap l
     let par0 = flipChildren deps
         theForbidden = do
               crits <- getCriticals
