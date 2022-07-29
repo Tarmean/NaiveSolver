@@ -55,6 +55,15 @@ class MonadGraph k m => MonadGraphMut k m | m -> k where
     hideNodeUnsafe :: k -> m ()
     default hideNodeUnsafe :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => k -> m ()
     hideNodeUnsafe = lift . hideNodeUnsafe
+
+    deleteNode :: k -> m ()
+    default deleteNode :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => k -> m ()
+    deleteNode = lift . deleteNode
+
+    unhideNode :: k -> m ()
+    default unhideNode :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => k -> m ()
+    unhideNode = lift . unhideNode
+
     markNodeAffected :: k -> m ()
     default markNodeAffected :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => k -> m ()
     markNodeAffected = lift . markNodeAffected
@@ -114,9 +123,9 @@ forActiveReachable_ k0 f = go k0
         n <- getChildren k
         forM_ n $ \x -> do
            h <- isHidden x
-           unless h $ f x >> go x
+           unless h $ go x >> f x
 forActiveReachable1_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
-forActiveReachable1_ k0 f = f k0 >> forActiveReachable_ k0 f
+forActiveReachable1_ k0 f = forActiveReachable_ k0 f >> f k0
 
 forReachableAll_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
 forReachableAll_ k0 f = go k0
@@ -176,8 +185,20 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
   
     hideNodeUnsafe :: Monad m => k -> GraphT k m ()
     hideNodeUnsafe k = do
-        forParentsAll_ k $ \k' -> GraphT (#arityMap . ix k' -= 1)
         GraphT (#hidden . at k .= Just ())
+    deleteNode :: Monad m => k -> GraphT k m ()
+    deleteNode k = do
+        forParentsAll_ k $ \k' -> GraphT (#arityMap . ix k' -= 1)
+        markNodeAffected k
+        GraphT $ do 
+          #hidden . at k .= Nothing
+          #arityMap . at k .= Nothing
+          #childMap . at k .= Nothing
+          #childMap . each . at k .= Nothing
+          #parentMap . at k .= Nothing
+    unhideNode :: Monad m => k -> GraphT k m ()
+    unhideNode k = do
+        GraphT (#hidden . at k .= Nothing)
     markNodeAffected :: Monad m => k -> GraphT k m ()
     markNodeAffected k = GraphT (#newHidden . at k .= Just ())
 
@@ -193,9 +214,7 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
         pure o
     addDeps deps0 = do
       oldDeps <- getChildrenMap
-      let 
-          
-          onlyRhs = mconcat (M.elems deps0) S.\\ S.fromList (M.keys deps0)
+      let onlyRhs = mconcat (M.elems deps0) S.\\ S.fromList (M.keys deps0)
           deps = M.union deps0 (M.fromList [(k, S.empty) | k <- S.toList onlyRhs])
           newDeps = MM.merge MM.preserveMissing MM.dropMissing (MM.zipWithMatched $ \_ a b -> a S.\\ b) deps oldDeps
           sizes = M.fromList [(k, 1+sum childSizes) | (k,vs) <- M.toList newDeps, let childSizes = map (sizes M.!) (S.toList vs)  ]
@@ -215,8 +234,10 @@ hideNode k = do
 nodesOf :: Ord k => GraphState k -> S.Set k
 nodesOf k = S.fromAscList $ M.keys $ arityMap k
 
-hideNodesBelow :: MonadGraphMut k m => k -> m ()
-hideNodesBelow k = forActiveReachable1_ k $ \k' -> hideNode k'
+-- hideNodesBelow :: MonadGraphMut k m => k -> m ()
+-- hideNodesBelow k = forActiveReachable1_ k $ \k' -> hideNode k'
+deleteNodesBelow :: MonadGraphMut k m => k -> m ()
+deleteNodesBelow k = forActiveReachable1_ k $ \k' -> deleteNode k'
 
 containsHidden :: MonadGraph k m => m (S.Set k)
 containsHidden = do

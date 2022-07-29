@@ -11,13 +11,11 @@ module FiniteDomains where
 import qualified Data.Set as S
 import Types
 import Test.QuickCheck
-    ( quickCheckAll, Testable(property), Property )
+    ( Testable(property), Property )
 import Propagator
 import Control.Monad.State
 import Data.Data
-import Control.Applicative
 import Control.Monad.Except
-import GHC.Records
 import Data.List (transpose)
 -- import Prettyprinter
 import qualified Data.Map as M
@@ -28,6 +26,63 @@ import Data.Char (digitToInt)
 newtype AllDifferentE a = AllDifferent { vars :: [a] }
   deriving (Eq, Ord, Show, Foldable, Functor)
 type AllDifferent = AllDifferentE Var
+
+allDiffProp :: forall a m s0. (Ord a, MonadState s0 m, Has s0 (PropEnv (FiniteDomain a)), Show a, Typeable a, Bounded a, Enum a) => AllDifferent -> AProp AllDifferent m s0
+allDiffProp a = toRule $ mapM_ (uncurry (propagate1 @a)) (splits mempty a.vars)
+  where
+    splits _ [] = []
+    splits l (r:rs) = (r, l <> S.fromList rs) : splits (S.insert r l) rs
+
+propagate1 :: forall a m. (MonadProp (FiniteDomain a) m, Ord a, Bounded a, Enum a) => Var -> S.Set Var -> m ()
+propagate1 v os = do
+  a <- ev @(FiniteDomain a) v
+  case S.toList a.members of
+    [x] -> mapM_ (outOver  @(FiniteDomain a) "allDiff" universe (delDomain x))  os
+    [] -> throwError (Just (S.singleton v))
+    _ -> pure ()
+
+delDomain :: Ord a => a -> FiniteDomain a -> FiniteDomain a
+delDomain v fd = FD outp
+  where outp = S.delete v fd.members
+
+data FiniteDomain a = FD { members :: S.Set a }
+  deriving (Eq, Ord, Show, Typeable)
+
+newtype SudokuNum = SD { digit :: Int}
+  deriving (Eq, Ord, Show, Enum) via Int
+instance Bounded SudokuNum where
+  minBound = SD 0
+  maxBound = SD (cellWidth^(2::Int)-1)
+class Universe a where
+    universe :: a
+instance (Ord a, Bounded a, Enum a) => Universe (FiniteDomain a) where
+    universe = FD $ S.fromList [minBound..maxBound]
+instance (Ord a) => PContains (FiniteDomain a) where
+  compareC (FD l) (FD r)
+      | l == r = Just EQ
+      | l `S.isSubsetOf` r = Just LT
+      | r `S.isSubsetOf` l = Just GT
+      | otherwise = Nothing
+
+instance (Ord a) => PSemigroup (FiniteDomain a) where
+  
+  (<?>) (FD a) (FD b)
+    | S.null intersect = Nothing
+    | otherwise = Just $ FD intersect
+    where intersect = S.intersection a b
+instance (Ord a) => PLattice (FiniteDomain a) where
+  (<||>) (FD a) (FD b) = Is $ FD $ S.union a b
+
+instance (Bounded a, Enum a, Ord a) => RegularSemigroup (FiniteDomain a) where
+  FD a ==> FD b = FD (b `S.union` S.difference ((universe :: FiniteDomain a).members)  a)
+instance (Bounded a, Enum a, Ord a) => PMonoid (FiniteDomain a) where
+  pempty = universe
+instance (Bounded a, Enum a, Ord a) => BoundedLattice (FiniteDomain a) where
+  bot = FD S.empty
+  isBot (FD a) = S.null a
+
+ft :: [Int] -> FiniteDomain SudokuNum
+ft = FD . S.fromList . map (SD . succ . (`mod` cellWidth))
 
 
 data ADTest = ADTest { testBool :: (PropEnv (Val Bool)), testEnv :: (PropEnv (FiniteDomain SudokuNum)), testAD :: (S.Set AllDifferent) }
@@ -47,10 +102,7 @@ instance Has ADTest (PropEnv (FiniteDomain SudokuNum)) where
 instance Has ADTest (S.Set AllDifferent) where
     getL =  (.testAD)
     putL v s = s { testAD = v }
-chunksOf :: Int -> [a] -> [[a]]
-chunksOf _ [] = []
-chunksOf i s = a : chunksOf i b
- where (a,b) = splitAt i s
+
 
 data Grid = Grid { rows :: [String] }
 instance Show Grid where
@@ -134,68 +186,13 @@ vsep = foldl1 (<->)
 pretty :: String -> Grid
 pretty s = Grid [s]
 printGrid :: PropEnv (FiniteDomain SudokuNum) -> Grid
-printGrid (penv :: PropEnv _) = vsep $ map hsep $ chunksOf (cellWidth^(2::Int)) $ [ case penv.known M.!? d of Just c ->  printCell c; Nothing -> printCell universe | d <- [0..cellWidth^(4::Int)-1]]
+printGrid (penv :: PropEnv (FiniteDomain SudokuNum)) = vsep $ map hsep $ chunksOf (cellWidth^(2::Int)) $ [ case penv.known M.!? d of Just c ->  printCell c; Nothing -> printCell universe | d <- [0..cellWidth^(4::Int)-1]]
 
 
-allDiffProp :: forall a m s0. (Ord a, MonadState s0 m, Has s0 (PropEnv (FiniteDomain a)), Show a, Typeable a, Bounded a, Enum a) => AllDifferent -> AProp AllDifferent m s0
-allDiffProp a = toRule $ mapM_ (uncurry (propagate1 @a)) (splits mempty a.vars)
-  where
-    splits _ [] = []
-    splits l (r:rs) = (r, l <> S.fromList rs) : splits (S.insert r l) rs
-
-propagate1 :: forall a m. (MonadProp (FiniteDomain a) m, Ord a, Bounded a, Enum a) => Var -> S.Set Var -> m ()
-propagate1 v os = do
-  a <- ev @(FiniteDomain a) v
-  case S.toList a.members of
-    [x] -> mapM_ (outOver  @(FiniteDomain a) "allDiff" universe (delDomain x))  os
-    [] -> throwError (Just (S.singleton v))
-    _ -> pure ()
-
-delDomain :: Ord a => a -> FiniteDomain a -> FiniteDomain a
-delDomain v fd = FD outp
-  where outp = S.delete v fd.members
 
 
 -- fixme: do stateful propagators with watched literal schemes
 -- incremental propagation is then folding over ops
-data FiniteDomain a = FD { members :: S.Set a }
-  deriving (Eq, Ord, Show, Typeable)
-
-newtype SudokuNum = SD { ditig :: Int}
-  deriving (Eq, Ord, Show, Enum) via Int
-instance Bounded SudokuNum where
-  minBound = SD 0
-  maxBound = SD (cellWidth^(2::Int)-1)
-class Universe a where
-    universe :: a
-instance (Ord a, Bounded a, Enum a) => Universe (FiniteDomain a) where
-    universe = FD $ S.fromList [minBound..maxBound]
-instance (Ord a) => PContains (FiniteDomain a) where
-  compareC (FD l) (FD r)
-      | l == r = Just EQ
-      | l `S.isSubsetOf` r = Just LT
-      | r `S.isSubsetOf` l = Just GT
-      | otherwise = Nothing
-
-instance (Ord a) => PSemigroup (FiniteDomain a) where
-  
-  (<?>) (FD a) (FD b)
-    | S.null intersect = Nothing
-    | otherwise = Just $ FD intersect
-    where intersect = S.intersection a b
-instance (Ord a) => PLattice (FiniteDomain a) where
-  (<||>) (FD a) (FD b) = Is $ FD $ S.union a b
-
-instance (Bounded a, Enum a, Ord a) => RegularSemigroup (FiniteDomain a) where
-  FD a ==> FD b = FD (b `S.union` S.difference ((universe :: FiniteDomain a).members)  a)
-instance (Bounded a, Enum a, Ord a) => PMonoid (FiniteDomain a) where
-  pempty = universe
-instance (Bounded a, Enum a, Ord a) => BoundedLattice (FiniteDomain a) where
-  bot = FD S.empty
-  isBot (FD a) = S.null a
-
-ft :: [Int] -> FiniteDomain SudokuNum
-ft = FD . S.fromList . map (SD . succ . (`mod` cellWidth))
 
 prop_impl_conj_r, prop_impl_conj_l, prop_impl_refl , prop_impl_full  , prop_impl_empty :: Property
 prop_impl_conj_l = property $ \l r -> ((ft l ==> ft r) &&& ft l) == ft l &&& ft r
@@ -221,3 +218,8 @@ prop_disj_growing = property $ \a b -> ft a `contains` (ft a ||| ft b)
 -- return []
 -- checkAll :: IO Bool
 -- checkAll = $quickCheckAll
+--
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf i s = a : chunksOf i b
+ where (a,b) = splitAt i s

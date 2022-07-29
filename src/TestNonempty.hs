@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -ddump-simpl -dsuppress-all -dsuppress-uniques -O2 -fforce-recomp #-}
+-- {-# OPTIONS_GHC -ddump-simpl -dsuppress-all -dsuppress-uniques -O2 -fforce-recomp #-}
 module TestNonempty (bar, baz) where
 
 import qualified Data.List.NonEmpty as NE

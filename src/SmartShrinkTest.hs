@@ -26,7 +26,7 @@ import Control.Monad
 
 import Data.Data.Lens
 import Control.Lens
-import SmartShrink (runShrinkForest, shrinkTree, RoseForestT, downwardM, HasIdx(..), MergeMap (unMergeMap), depsMap, isRelevant, flipChildren, navigator, runVarTFrom, MonadVar (mkVar, setVar), seqForest)
+import SmartShrink (runShrinkForest, shrinkTree, RoseForestT, downwardM, HasIdx(..), MergeMap (unMergeMap), depsMap, isRelevant, flipChildren, navigator, runVarTFrom, MonadVar (mkVar, setVar), seqForest, traceForest)
 import Monad.Zipper (recursive, RecView (down), cursors, MonadZipper (cursor), up, pull)
 import qualified Generic.Random.Internal.Generic as G
 import Test.StrictCheck.Shaped
@@ -40,7 +40,7 @@ import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
 import Monad.Critical (evalCritical, evalCriticalT, getCriticals)
-import ShrinkLoop (replaceNode, doShrink)
+import ShrinkLoop (replaceNode, doShrink, smartLoop)
 import Monad.Graph (MonadGraphMut (addDeps), runGraphT)
 import Monad.Oracle (MonadOracle, checkpoint)
 import Monad.Snapshot
@@ -147,6 +147,42 @@ instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) 
 myShrinker :: (MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m) => m Bool
 myShrinker = doShrink $ replaceNode (\k -> tryReplace k Hole) childExpr
 
+data BTree a = Leaf a | Node (BTree a) (BTree a)
+  deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable)
+instance SOP.Generic (BTree a)
+instance SOP.HasDatatypeInfo (BTree a)
+instance Shaped a => Shaped (BTree a)
+toTree :: [a] -> BTree a
+toTree ls = case ls of
+  [] -> error "toTree: empty list"
+  [a] -> Leaf a
+  _ -> Node (toTree a) (toTree b)
+  where
+    (a,b) = splitAt (length ls `div` 2) ls
+shrinkTest2 = mapM_ print $ fmap (fmap prettyWithKey) $ traceForest (testP . getValueFromInterleaved) $  myShrinkList
+myShrinkList :: RoseForestT Identity (WithKey % BTree Int)
+myShrinkList = runShrinkForest (indexTerm $ toTree [1..100]) $ evalCriticalT @Int $ runGraphT $ runVarTFrom 89 $ do
+  downwardM boxed $ do
+    let
+        childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
+        childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy (BTree Int)))
+    recursive $ do
+        checkpoint
+        d <- depsMap childExpr
+        addDeps d
+        let
+          theShrinker = replaceNode (\k -> tryReplace k (Leaf (0::Int))) childExpr
+          -- loop = do
+          --   theShrinker >>= \case
+          --     True -> loop
+          --     False -> pure ()
+        -- loop
+        smartLoop theShrinker
+        traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getCount))
+        pure ()
+testP x = incCountBy (length x) (10 `elem` x && 14 `elem` x)
+
+
 myShrinkTree :: RoseForestT Identity (WithKey % Expr)
 myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runGraphT $ runVarTFrom i $ do
   downwardM boxed $ do
@@ -162,7 +198,6 @@ myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runGraphT $ runVar
         loop
         -- shrinkTree childExpr (\k -> tryReplace k (Var A))
         -- s <- getCriticals
-        -- traceM (show s)
         pure ()
   where
     (idxExpr, i) = indexTermFrom 0 expr
@@ -259,6 +294,9 @@ eval e0 s0
 myCount :: IORef Int
 myCount = unsafePerformIO $ newIORef (0::Int)
 
+{-# INLINE incCountBy #-}
+incCountBy :: Int -> a -> a
+incCountBy i a = unsafePerformIO (modifyIORef' myCount (+i)) `seq` a
 {-# INLINE incCount #-}
 incCount :: a -> a
 incCount a = unsafePerformIO (modifyIORef' myCount (+1)) `seq` a

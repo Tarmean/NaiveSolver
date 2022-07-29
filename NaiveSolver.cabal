@@ -25,7 +25,6 @@ source-repository head
 
 library
   exposed-modules:
-      Arith
       Data.Bag
       Data.Growable
       Data.Mutable.Distributive
