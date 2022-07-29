@@ -44,7 +44,7 @@ dependencies:
 # - express
 # - speculate
 # - extrapolate
-- leancheck
+# - leancheck
 - indexed
 - quickspec
 - twee-lib

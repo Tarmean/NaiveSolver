@@ -8,6 +8,7 @@ import Control.Monad.Trans
 import GHC.TypeLits
 import Control.Monad.State
 import Control.Monad.Cont (ContT)
+import Data.Functor.Identity
 
 
 type family ChildSnapshot m where
@@ -35,3 +36,7 @@ instance MonadSnapshot m => MonadSnapshot (StateT s m) where
        t <- lift snapshot
        pure (s,t)
     restore (s,t) = put s *> lift (restore t)
+instance MonadSnapshot Identity where
+    type Snapshot Identity = ()
+    snapshot = pure ()
+    restore _ = pure ()

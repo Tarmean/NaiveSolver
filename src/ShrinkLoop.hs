@@ -17,30 +17,28 @@ import qualified Data.List as L
 import Data.Ord (comparing)
 import Data.Maybe (isNothing, isJust)
 import PyF (fmt)
+import Monad.Cut
+import Monad.Amb (pick)
 
 
 
-newtype GenAction m = GenAction { unAction :: Int -> m (Maybe (Int, m ())) }
+newtype GenAction m = GenAction { getAction :: Int -> m Int }
+unAction :: (MonadCut m, Alternative m) => GenAction m -> Int -> m (Maybe Int)
+unAction m i = cut (fmap Just (getAction m i) <|> pure Nothing)
 
-instance (Monad m) => Semigroup (GenAction m) where
+instance (Alternative m) => Semigroup (GenAction m) where
   (<>) l r = GenAction $ \i -> do
-        a <- unAction l i
-        b <- unAction r i
-        case (a,b) of
-           (Nothing, x) -> pure x
-           (x, Nothing) -> pure x
-           (Just (ai,_), Just (bi,_)) 
-             | ai >= bi -> pure a
-             | otherwise -> pure b
-instance (Monad m) => Monoid (GenAction m) where
-   mempty = GenAction $ \_ -> pure Nothing
+        getAction l i <|> getAction r i
 
-doShrink :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m) => GenAction m -> m Bool
+instance (Alternative m) => Monoid (GenAction m) where
+   mempty = GenAction $ \_ -> empty
+
+doShrink :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> m Bool
 doShrink g = do
     fullSize <- nodeCount
     branchCheckpoint (quotaShrink fullSize g) (pure ()) (has_conflict g)
 
-has_conflict :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m) => GenAction m -> m ()
+has_conflict :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> m ()
 has_conflict g = do
     fullSize <- nodeCount
     if fullSize > 1 then do
@@ -49,7 +47,7 @@ has_conflict g = do
     else markAllCritical
 
 data ShrinkResult k = FullyShrunk (S.Set k) | NoShrinksLeft | ShrinksLeft (S.Set k)
-partialShrink :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m) => Int -> GenAction m -> m (ShrinkResult k)
+partialShrink :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => Int -> GenAction m -> m (ShrinkResult k)
 partialShrink size g = do
     _ <- popChangedNodes
     p <- snapshot
@@ -85,7 +83,7 @@ takeBlocked x = do
     put $ s { blocked = L.filter (/= x) (blocked s) }
 addBlocked  :: (Monad m, Eq k) => S.Set k -> StateT (SearchState k) m ()
 addBlocked x = modify $ \s -> s { blocked =  x:blocked s}
-performNextAction :: (MonadGraphMut k m, Show k, MonadSnapshot m, MonadOracle m, Alternative m) => GenAction m -> StateT (SearchState k) m Bool
+performNextAction :: (MonadGraphMut k m, Show k, MonadSnapshot m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> StateT (SearchState k) m Bool
 performNextAction gen = do
      bb <- peekBestBlocked
      ss <- getStepSize
@@ -120,7 +118,7 @@ performNextAction gen = do
                    Nothing -> pure False
                 -- traceM [fmt|stepping with size {step}, no shrink|] >> pure (isJust bb)
               _ -> modify (\s -> s { stepSize = stepSize s * 2 }) >> pure True
-smartLoop :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m) => GenAction m -> m ()
+smartLoop :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> m ()
 smartLoop gen = flip evalStateT (SearchState [] 8 []) $ do
     let
       loop = performNextAction gen >>= \case
@@ -131,7 +129,7 @@ smartLoop gen = flip evalStateT (SearchState [] 8 []) $ do
     active <- getActiveNodes
     traceM [fmt|active {show active}, criticals {show crits}|]
 
-unblockAction :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m) => GenAction m -> S.Set k -> StateT (SearchState k) m  ()
+unblockAction :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> S.Set k -> StateT (SearchState k) m  ()
 unblockAction g s = do
     mapM_ unhideNode s
     (r, left) <- focusOn s $ do
@@ -168,7 +166,7 @@ branchCheckpoint m onSuccess onFail = do
             pure True
       False -> pure False
 
-quotaShrink :: (Show k, MonadGraphMut k m) => Int -> GenAction m -> m Bool
+quotaShrink :: (Show k, MonadGraphMut k m, MonadCut m, Alternative m) => Int -> GenAction m -> m Bool
 quotaShrink quota0 g = loop False quota0
   where
       loop acc quota
@@ -177,22 +175,35 @@ quotaShrink quota0 g = loop False quota0
             ma <- unAction g quota
             case ma of
                 Nothing -> pure acc
-                Just (quota', m) -> m >> loop True quota'
+                Just quota' -> loop True quota'
 
-replaceNode :: (HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k) => (o -> m o) -> Traversal' o o -> GenAction m
+
+replaceNode :: (HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k, Alternative m) => (o -> m o) -> Traversal' o o -> GenAction m
 replaceNode genReplacement l = GenAction $ \sizeLimit -> do
   hidden <- containsHidden
   sl <- largestNodeWith (\v k -> v <= sizeLimit && not (S.member k hidden))
   case sl of
-    Just (s, k) | s > 1 -> 
-      let
-        rep = do
-          navTo l k
-          o <- cursor
-          o' <- genReplacement o
-          replaceValue l k o'
-      in pure $ Just (sizeLimit-s+1, rep)
-    _ -> pure Nothing
+    Just (s, k) | s > 1 -> do
+      navTo l k
+      o <- cursor
+      o' <- genReplacement o
+      replaceValue l k o'
+      pure $ sizeLimit-s+1
+    _ -> empty
+
+hoistNode :: (HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k, Alternative m, MonadCut m) => Traversal' o o -> GenAction m
+hoistNode l = GenAction $ \limit -> cut $ do
+    hs <- getHidden
+    h <- pick hs
+    navTo l h
+    ps <- activeParents h
+    p <- pick ps
+    prevSize <- S.size <$> getActiveNodes
+    v <- cursor
+    replaceValue l p v
+    postSize <- S.size <$> getActiveNodes
+    guard (postSize - prevSize <= limit)
+    pure (limit + postSize - prevSize)
 
 replaceValue ::(HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k) => Traversal' o o -> k -> o -> m ()
 replaceValue l k v = do
@@ -204,3 +215,4 @@ replaceValue l k v = do
       Nothing -> pure ()
       Just p -> addChild p (theIdx v)
     deleteNodesBelow k
+

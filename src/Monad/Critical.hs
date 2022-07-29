@@ -18,9 +18,10 @@ import Data.Monoid (Last(..))
 import Monad.Oracle (MonadOracle)
 import Control.Applicative (Alternative)
 import Monad.Snapshot (MonadSnapshot)
+import Monad.Cut (MonadCut)
 
 newtype Critical k m a = Critical { unCritical :: StateT (S.Set k) m a }
-  deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot)
+  deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut)
 evalCriticalT :: (Ord k, Monad m) => Critical k m a -> m a
 evalCriticalT = flip evalStateT S.empty . unCritical
 evalCritical :: (Ord k) => Critical k Identity a -> a

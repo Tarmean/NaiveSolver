@@ -59,6 +59,7 @@ library
       Monad.Amb
       Monad.ConcreteBreadthFirst
       Monad.Critical
+      Monad.Cut
       Monad.Graph
       Monad.Levels
       Monad.Oracle
@@ -99,7 +100,6 @@ library
     , hashable
     , indexed
     , kure
-    , leancheck
     , lens
     , mmorph
     , mtl
@@ -145,7 +145,6 @@ executable NaiveSolver-exe
     , hashable
     , indexed
     , kure
-    , leancheck
     , lens
     , mmorph
     , mtl
@@ -192,7 +191,6 @@ test-suite NaiveSolver-test
     , hashable
     , indexed
     , kure
-    , leancheck
     , lens
     , mmorph
     , mtl

@@ -40,10 +40,12 @@ import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
 import Monad.Critical (evalCritical, evalCriticalT, getCriticals)
-import ShrinkLoop (replaceNode, doShrink, smartLoop)
+import ShrinkLoop (replaceNode, doShrink, smartLoop, hoistNode, GenAction)
 import Monad.Graph (MonadGraphMut (addDeps), runGraphT)
 import Monad.Oracle (MonadOracle, checkpoint)
 import Monad.Snapshot
+import Data.Coerce (coerce)
+import Monad.Cut
 
 data Var = A | B | C | D
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
@@ -144,11 +146,18 @@ instance HasIdx (WithKey a) Int where
 instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) o where
   theIdx (SomeTyp (Wrap f)) = theIdx f
     
-myShrinker :: (MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m) => m Bool
+myShrinker :: (MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m, MonadCut m) => m Bool
 myShrinker = doShrink $ replaceNode (\k -> tryReplace k Hole) childExpr
 
 data BTree a = Leaf a | Node (BTree a) (BTree a)
-  deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable)
+  deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable, Functor)
+newtype NoShrink a = NoShrink a
+instance Arbitrary (NoShrink a) where
+    arbitrary = undefined
+    shrink _ = []
+instance Arbitrary (BTree a) where
+    arbitrary = undefined
+    shrink = coerce .  genericShrink . fmap NoShrink
 instance SOP.Generic (BTree a)
 instance SOP.HasDatatypeInfo (BTree a)
 instance Shaped a => Shaped (BTree a)
@@ -167,20 +176,21 @@ myShrinkList = runShrinkForest (indexTerm $ toTree [1..100]) $ evalCriticalT @In
         childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
         childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy (BTree Int)))
     recursive $ do
-        checkpoint
         d <- depsMap childExpr
         addDeps d
         let
-          theShrinker = replaceNode (\k -> tryReplace k (Leaf (0::Int))) childExpr
+          theShrinker = (replaceNode (\k -> tryReplace k (Leaf (0::Int))) childExpr)
+          otherChrinker = hoistNode childExpr
           -- loop = do
-          --   theShrinker >>= \case
+          --   doShrink theShrinker >>= \case
           --     True -> loop
           --     False -> pure ()
         -- loop
-        smartLoop theShrinker
-        traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getCount))
+        smartLoop (theShrinker <> otherChrinker)
+        traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getTracker))
         pure ()
-testP x = incCountBy (length x) (10 `elem` x && 14 `elem` x)
+testP x = pushTracker (out, length x) out
+  where out = (10 `elem` x && 14 `elem` x)
 
 
 myShrinkTree :: RoseForestT Identity (WithKey % Expr)
@@ -281,7 +291,7 @@ doSomething = do
 eval :: M.Map Var Expr -> Expr -> Expr
 eval e0 s0
   -- | trace ("eval " ++ show s0) False = undefined
-  | snd $ incCount (s0, False) = undefined
+  -- | snd $ incCount (s0, False) = undefined
   |otherwise = go e0 s0
   where
     go e (Var v) = M.findWithDefault (Var v) v e
@@ -290,18 +300,15 @@ eval e0 s0
         a' -> App a' b
     go _ a = a
 
-{-# NOINLINE myCount #-}
-myCount :: IORef Int
-myCount = unsafePerformIO $ newIORef (0::Int)
+{-# NOINLINE myTracker #-}
+myTracker :: IORef [(Bool, Int)]
+myTracker = unsafePerformIO $ newIORef []
 
-{-# INLINE incCountBy #-}
-incCountBy :: Int -> a -> a
-incCountBy i a = unsafePerformIO (modifyIORef' myCount (+i)) `seq` a
-{-# INLINE incCount #-}
-incCount :: a -> a
-incCount a = unsafePerformIO (modifyIORef' myCount (+1)) `seq` a
-getCount :: IO Int
-getCount = readIORef myCount
+{-# INLINE pushTracker #-}
+pushTracker :: (Bool, Int) -> a -> a
+pushTracker s a = unsafePerformIO (modifyIORef' myTracker (s:)) `seq` a
+getTracker :: IO [(Bool, Int)]
+getTracker = readIORef myTracker
 
 
 propWorks :: Expr -> Bool

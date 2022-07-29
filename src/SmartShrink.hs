@@ -84,6 +84,8 @@ import qualified Monad.Levels as L
 import Control.Monad.Morph (MFunctor (hoist))
 import Monad.Critical (MonadCritical(..), Critical(..))
 import Monad.Snapshot (MonadSnapshot)
+import Monad.Amb
+import Monad.Cut
 
 replaceWithChild :: (MonadZipper o m, Plated o, Alternative m) => m ()
 replaceWithChild = do
@@ -144,8 +146,8 @@ instance (Pretty f, Pretty a) => Pretty (Bin f a) where
   pPrint (Leaf _ a) = pPrint a
   pPrint (IVar _ v) = pPrint v
 
-newtype ShrinkT o (r::Type) m a = ShrinkT { unShrink :: ZipperT o (ContT r m) a }
-  deriving (Functor, Applicative, Monad, MonadSnapshot)
+newtype ShrinkT o (r::Type) m a = ShrinkT { unShrink :: ZipperT o (AmbT r m) a }
+  deriving (Functor, Applicative, Monad, MonadSnapshot, MonadCut)
 -- instance MFunctor (ShrinkT o r) where
 --   hoist f (ShrinkT m) = ShrinkT (hoist (hoist f) m)
 deriving instance MonadZipper o (ShrinkT (Zipper h i o) r m)
@@ -169,10 +171,11 @@ withinM l m = iwithinM (indexing l) m
     
 -- deriving instance Monad m => MonadState (ShrinkState f o) (ShrinkT' f o r m)
 
-shrinkT :: (t -> ((a, t) -> m r) -> m r) -> ShrinkT t r m a
-shrinkT f = ShrinkT $ ZipperT $ StateT $ \s -> ContT $ \k -> f s k
-runShrinkT :: p -> ((a, Top :>> p) -> m r) ->ShrinkT (Top :>> p) r m a ->  m r
-runShrinkT o k m = runContT (runZipperT (unShrink m) (zipper o)) k
+shrinkT :: (t -> ((a, t) -> m r -> m r) -> m r -> m r) -> ShrinkT t r m a
+shrinkT f = ShrinkT $ ZipperT $ StateT $ \s -> Amb $ \k o -> f s k o
+
+runShrinkT :: (Applicative f, Monoid a1) => p -> ((a2, Top :>> p) -> f a1) -> ShrinkT (Top :>> p) a1 f a2 -> f a1
+runShrinkT o k m = runAmb (runZipperT (unShrink m) (zipper o)) (\a mr -> liftA2 (<>) (k a) mr) (pure mempty)
 
 data OraclingT m a = O (m (a, (Bool -> OraclingT m a)))
 newtype RoseForestT m a = RoseF { unForestT :: m (RoseCell m a)}
@@ -231,7 +234,7 @@ runVarTFrom idx (VarT m) = evalStateT m idx
 instance MonadVar m => MonadVar (ZipperT zip m)
 instance MonadVar m => MonadVar (StateT o m)
 newtype VarT m a = VarT { unVarT :: StateT Int m a }
-  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor, MonadSnapshot)
+  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor, MonadSnapshot, MonadCut)
 instance MonadZipper o m => MonadZipper o (VarT m) where
 instance RecView o n => RecView o  (VarT n)
 instance HasRec o m n => HasRec o (VarT m) (VarT n)
@@ -267,8 +270,8 @@ joinForest = RoseF . join . fmap unForestT
 instance (MonadOut o r (ShrinkT zip (RoseForestT m r) m), Monad m) => MonadOracle (ShrinkT zip (RoseForestT m r) m) where
     checkpoint = do
         o <- getOut
-        shrinkT $ \s k -> do
-             pure $ RoseF $ pure (RoseCell o (joinForest $ k ((), s)) empty)
+        shrinkT $ \s cons zero  -> do
+             pure $ RoseF $ pure (RoseCell o (joinForest $ cons ((), s) (pure empty)) (joinForest zero))
 
 instance (Zipping h o, r ~ Zipped h o, Monad m) => MonadOut o r (ShrinkT (Zipper h i o) x m) where
     getOut = ShrinkT getOut
@@ -807,8 +810,6 @@ mkIndices s = evalState (go s) 0
     go (Leaf _ c) = Leaf <$> popNext <*> pure c
     go (IVar _ v) = IVar <$> popNext <*> pure v
 
-pick :: Alternative f => [a] -> f a
-pick = asum . map pure
 tryModify :: (MonadZipper (Bin () Constant) m, Typeable a, MkExpr a) => (a -> a) -> m ()
 tryModify f = do
     s <- cursor
@@ -945,13 +946,11 @@ whenType ty m = do
 instance MonadTrans (ShrinkT o r) where
     lift sm = ShrinkT $ lift $ lift sm
 
-constContT :: m r -> ContT r m a
-constContT m = ContT $ \_ -> m
-instance (Applicative m, Monoid r) => Alternative (ShrinkT o r m) where
-    empty = ShrinkT $ lift $ constContT $ pure @m (mempty @r)
-    ShrinkT x <|> ShrinkT y = ShrinkT $ ZipperT $ StateT $ \z -> ContT $ \c -> liftA2 (<>) (ml x z c) (ml y z c)
-      where
-        ml m z c = (runContT (runStateT (unZipperT m) z) c)
+constContT :: Alternative m => m r -> AmbT r m a
+constContT m = Amb $ \_ g -> m <|> g
+instance Alternative (ShrinkT o r m) where
+    empty = ShrinkT empty
+    ShrinkT x <|> ShrinkT y = ShrinkT (x <|> y)
 instance (Applicative m, Monoid r) => MonadFail (ShrinkT o r m) where
     fail _ = empty
 instance (Monoid r, Applicative m) => MonadPlus (ShrinkT o r m) where
@@ -1014,15 +1013,15 @@ getInt = fromInteger (natVal @n undefined)
 getTypeable :: forall c. Typeable c => TypeRep
 getTypeable = typeRep (undefined :: proxy c)
 
-{-# NOINLINE myCount #-}
-myCount :: IORef Int
-myCount = unsafePerformIO $ newIORef (0::Int)
+{-# NOINLINE myTracker #-}
+myTracker :: IORef [(Bool, Int)]
+myTracker = unsafePerformIO $ newIORef []
 
-{-# INLINE incCount #-}
-incCount :: a -> a
-incCount a = unsafePerformIO (modifyIORef' myCount (+1)) `seq` a
-getCount :: IO Int
-getCount = readIORef myCount
+{-# INLINE pushTracker #-}
+pushTracker :: (Bool, Int) -> a -> a
+pushTracker s a = unsafePerformIO (modifyIORef' myTracker (s:)) `seq` a
+getCount :: IO ()
+getCount = print =<< readIORef myTracker
 
 -- myTest :: [Int] -> Bool
 -- myTest ls 

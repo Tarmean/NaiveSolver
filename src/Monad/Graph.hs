@@ -27,6 +27,7 @@ import PyF (fmt)
 import Debug.Trace (traceM)
 import Monad.Snapshot (MonadSnapshot)
 import GHC.Stack (HasCallStack, callStack)
+import Monad.Cut (MonadCut)
 
 class (Ord k, Monad m) => MonadGraph k m | m -> k where
     getParentsMap :: m (M.Map k k)
@@ -147,6 +148,11 @@ forParentsAll_ k0 f = go k0
 parentsListAll1 :: (MonadGraph k m, Ord k) => k -> m [k]
 parentsListAll1 k = do
    execWriterT $  forParentsAll1_ k $ \k' -> tell [k']
+activeParents :: (MonadGraph k m, Ord k) => k -> m [k]
+activeParents k = do
+   execWriterT $  forParentsAll_ k $ \k' -> do
+      p <- isHidden k'
+      unless p (tell [k'])
 
 data GraphState k = GraphState {
     parentMap :: M.Map k k,
@@ -156,7 +162,7 @@ data GraphState k = GraphState {
     newHidden :: S.Set k
 } deriving (Eq, Ord, Show, Generic)
 newtype GraphT k m a = GraphT { unGraphT :: StateT (GraphState k) m a }
-    deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot)
+    deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut)
 instance (Ord k, Monad m) => MonadGraph k (GraphT k m) where
     getParentsMap = GraphT (gets parentMap)
     getChildrenMap = GraphT (gets childMap)

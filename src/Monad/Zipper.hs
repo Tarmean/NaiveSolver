@@ -21,6 +21,7 @@ import Control.Lens
 import Control.Monad.Morph (MFunctor(..))
 import GHC.Stack (HasCallStack)
 import Monad.Snapshot
+import Monad.Cut (MonadCut)
 
 
 
@@ -282,7 +283,7 @@ instance (MonadZipper o m) => MonadZipper o (ReaderT r m)
 instance (MonadZipper o m) => MonadZipper o (StateT2 r m)
 
 newtype ZipperT zip m a = ZipperT { unZipperT :: StateT zip m a }
-  deriving newtype (Alternative, MonadPlus, Applicative, Functor, Monad, MonadReader r, MonadWriter w, MonadFail, MFunctor, MonadSnapshot)
+  deriving newtype (Alternative, MonadPlus, Applicative, Functor, Monad, MonadReader r, MonadWriter w, MonadFail, MFunctor, MonadSnapshot, MonadCut)
 instance MonadTrans (ZipperT zip) where
    lift m = ZipperT (lift m)
 

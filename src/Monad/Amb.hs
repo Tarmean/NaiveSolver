@@ -15,13 +15,21 @@ This works even if #count targets mutable memory. Operationally, both alternativ
  -}
 module Monad.Amb where
 import Control.Monad.State ( ap, MonadTrans (lift), MonadState (..) )
-import Control.Applicative ( Alternative((<|>), empty) )
+import Control.Applicative ( Alternative((<|>), empty), Applicative (liftA2) )
 import Control.Monad.Primitive
 import Control.Monad.Cont.Class
 import Control.Monad
+import GHC.Base (build)
+import Data.Functor.Identity
+import Monad.Snapshot (MonadSnapshot)
+import qualified Data.Foldable as F
 
 data AmbT r m a = Amb { runAmb :: (a -> m r -> m r) -> m r -> m r }
   deriving Functor
+instance MonadSnapshot m => MonadSnapshot (AmbT r m)
+   
+pick :: (Foldable t, Alternative f) => t a -> f a
+pick = F.asum . map pure . F.toList
 
 instance Monad (AmbT r m) where
   Amb m >>= f = Amb $ \onSucc onFail -> m (\a onFail' -> runAmb (f a) onSucc onFail') onFail
@@ -54,6 +62,12 @@ instance (Alternative  m, Monad m) => MonadCont (AmbT r m) where
 
 withFuture_ :: ((a -> AmbT r m ()) -> AmbT r m a) -> AmbT r m a
 withFuture_ f = Amb $ \onSucc onFail -> runAmb (f $ \a -> Amb $ \next failed -> onSucc a (next () failed)) (\a _ -> onSucc a onFail) onFail
+
+
+gatherList :: Applicative m => AmbT [r] m r -> m [r]
+gatherList (Amb k) = k (\a b -> (a:) <$> b) (pure [])
+ambToList :: AmbT [r] Identity r -> [r]
+ambToList = runIdentity . gatherList
 
 withFuture :: ((a -> m r) -> m r) -> AmbT r m a
 withFuture f = Amb $ \onSucc onFail -> f $ \a -> onSucc a onFail
