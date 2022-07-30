@@ -23,6 +23,7 @@ import qualified Data.Map as M
 import Control.DeepSeq
 import System.Timeout (timeout)
 import Control.Monad
+import Monad.Snapshot()
 
 import Data.Data.Lens
 import Control.Lens
@@ -39,13 +40,14 @@ import Generics.SOP.NP
 import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
-import Monad.Critical (evalCritical, evalCriticalT, getCriticals)
-import ShrinkLoop (replaceNode, doShrink, smartLoop, hoistNode, GenAction)
+import Monad.Critical (evalCritical, evalCriticalT, getCriticals, MonadCritical)
+import ShrinkLoop (replaceNode, doShrink, smartLoop, hoistNode, GenAction, hoistInCrit)
 import Monad.Graph (MonadGraphMut (addDeps), runGraphT)
 import Monad.Oracle (MonadOracle, checkpoint)
 import Monad.Snapshot
 import Data.Coerce (coerce)
 import Monad.Cut
+import qualified Data.IntSet as S
 
 data Var = A | B | C | D
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
@@ -70,6 +72,14 @@ instance Arbitrary Expr where
 -- >>> prettyWithKey $ indexTerm (1::Int, "abc")
 -- "0#(,) 1#1 2#(3#'a' : 4#5#'b' : 6#7#'c' : 8#[])"
 
+instance Shaped a => Plated (WithKey % (BTree a)) where
+ plate f (Wrap (WithKey k a0)) = Wrap . WithKey k <$> traverseShape f a0
+traverseShape :: forall a f. (Shaped a, Applicative f) => (WithKey % (BTree a) -> f (WithKey % (BTree a))) -> Shape (BTree a) ((%) WithKey) -> f (Shape (BTree a) ((%) WithKey))
+traverseShape f a = match @(BTree a) a a (\x _ -> unflatten <$> traverseFlattened @Shaped (maybeF f) x)
+maybeF :: forall t p f. (Typeable p, Typeable t, Applicative f) => (p -> f p) -> t -> f t
+maybeF f a = case eqT @p @t of
+  Just Refl -> f a
+  Nothing -> pure a
 indexTerm :: Shaped a => a -> WithKey % a
 indexTerm = fst . indexTermFrom 0
 indexTermFrom :: Shaped a => Int -> a -> (WithKey % a, Int)
@@ -120,6 +130,7 @@ boxTyp (SomeTyp @a _) = typeRep (undefined :: proxy a)
 forceBox :: forall a f. (Typeable f, Typeable a) => SomeTyp f -> (f % a)
 forceBox = fromJust . unBox
 
+{-# INLINE overChildren #-}
 overChildren :: forall f g. (Typeable f, Applicative g, Traversable f) => LensLike' g (SomeTyp f) (SomeTyp f)
 overChildren f (SomeTyp @a (Wrap fa)) = fmap (SomeTyp @a . Wrap) $ sequenceA $ (\a -> match @a a a $ \flat _ -> worker flat) <$> fa
   where
@@ -146,8 +157,8 @@ instance HasIdx (WithKey a) Int where
 instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) o where
   theIdx (SomeTyp (Wrap f)) = theIdx f
     
-myShrinker :: (MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m, MonadCut m) => m Bool
-myShrinker = doShrink $ replaceNode (\k -> tryReplace k Hole) childExpr
+-- myShrinker :: (MonadCritical Int m, MonadSnapshot m, MonadVar m, MonadGraphMut Int m, Alternative m, MonadOracle m, RecView (SomeTyp WithKey) m, MonadCut m) => m Bool
+-- myShrinker = doShrink $ replaceNode (\k -> tryReplace k Hole) childExpr
 
 data BTree a = Leaf a | Node (BTree a) (BTree a)
   deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable, Functor)
@@ -168,19 +179,22 @@ toTree ls = case ls of
   _ -> Node (toTree a) (toTree b)
   where
     (a,b) = splitAt (length ls `div` 2) ls
-shrinkTest2 = mapM_ print $ fmap (fmap prettyWithKey) $ traceForest (testP . getValueFromInterleaved) $  myShrinkList
+shrinkTest2 = print . last $ fmap (fmap prettyWithKey) $ traceForest (testP . getValueFromInterleaved) $  myShrinkList
+instance HasIdx (WithKey % a) Int where
+    theIdx (Wrap f) = theIdx f
+
 myShrinkList :: RoseForestT Identity (WithKey % BTree Int)
-myShrinkList = runShrinkForest (indexTerm $ toTree [1..100]) $ evalCriticalT @Int $ runGraphT $ runVarTFrom 89 $ do
-  downwardM boxed $ do
+myShrinkList = runShrinkForest t $ evalCriticalT @Int $ runGraphT $ runVarTFrom i $ do
+  cut $ do
     let
-        childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
-        childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy (BTree Int)))
+        childExpr :: Traversal' (WithKey % BTree Int) (WithKey % BTree Int)
+        childExpr = plate
     recursive $ do
         d <- depsMap childExpr
         addDeps d
         let
-          theShrinker = (replaceNode (\k -> tryReplace k (Leaf (0::Int))) childExpr)
-          otherChrinker = hoistNode childExpr
+          theShrinker = (replaceNode (\_ -> injectVal (Leaf 0)) childExpr)
+          otherChrinker = hoistNode childExpr <> hoistInCrit childExpr
           -- loop = do
           --   doShrink theShrinker >>= \case
           --     True -> loop
@@ -189,55 +203,62 @@ myShrinkList = runShrinkForest (indexTerm $ toTree [1..100]) $ evalCriticalT @In
         smartLoop (theShrinker <> otherChrinker)
         traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getTracker))
         pure ()
+  where (t, i) = indexTermFrom 0 (toTree [1..1000])
+testP :: BTree S.Key -> Bool
 testP x = pushTracker (out, length x) out
-  where out = (10 `elem` x && 14 `elem` x)
+  where out = S.null $ foldr S.delete (S.fromList  [100,200,300,400,500,600,700,800,900]) x
 
 
-myShrinkTree :: RoseForestT Identity (WithKey % Expr)
-myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runGraphT $ runVarTFrom i $ do
-  downwardM boxed $ do
-    recursive $ do
-        checkpoint
-        d <- depsMap childExpr
-        addDeps d
-        let
-          loop = do
-            myShrinker >>= \case
-              True -> loop
-              False -> pure ()
-        loop
-        -- shrinkTree childExpr (\k -> tryReplace k (Var A))
-        -- s <- getCriticals
-        pure ()
-  where
-    (idxExpr, i) = indexTermFrom 0 expr
-childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
-childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy Expr))
+-- myShrinkTree :: RoseForestT Identity (WithKey % Expr)
+-- myShrinkTree = runShrinkForest idxExpr $ evalCriticalT @Int $ runGraphT $ runVarTFrom i $ do
+--   downwardM boxed $ do
+--     recursive $ do
+--         checkpoint
+--         d <- depsMap childExpr
+--         addDeps d
+--         let
+--           loop = do
+--             myShrinker >>= \case
+--               True -> loop
+--               False -> pure ()
+--         loop
+--         -- shrinkTree childExpr (\k -> tryReplace k (Var A))
+--         -- s <- getCriticals
+--         pure ()
+--   where
+--     (idxExpr, i) = indexTermFrom 0 expr
+-- childExpr :: (Typeable f1, Applicative f2, Traversable f1) => (SomeTyp f1 -> f2 (SomeTyp f1)) -> SomeTyp f1 -> f2 (SomeTyp f1)
+-- childExpr = overChildren . filtered (\x -> boxTyp x == typeRep (undefined :: proxy Expr))
 
-        -- let nav k = navigator (flipChildren deps) overChildren k
-        -- traceM (show deps)
-        -- nav 2
-        -- c <- cursors (fmap prettyWithKey . unBox @Var)
-        -- traceM (show  c)
-        -- nav 7
-        -- c <- cursors (fmap prettyWithKey . unBox @Var)
-        -- traceM (show  c)
-        -- up
-        -- c <- cursors (fmap prettyWithKey . unBox @Expr)
-        -- traceM (show  c)
-        -- pull rightward
-        -- c <- cursors (fmap prettyWithKey . unBox @Expr)
-        -- traceM (show  c)
+--         -- let nav k = navigator (flipChildren deps) overChildren k
+--         -- traceM (show deps)
+--         -- nav 2
+--         -- c <- cursors (fmap prettyWithKey . unBox @Var)
+--         -- traceM (show  c)
+--         -- nav 7
+--         -- c <- cursors (fmap prettyWithKey . unBox @Var)
+--         -- traceM (show  c)
+--         -- up
+--         -- c <- cursors (fmap prettyWithKey . unBox @Expr)
+--         -- traceM (show  c)
+--         -- pull rightward
+--         -- c <- cursors (fmap prettyWithKey . unBox @Expr)
+--         -- traceM (show  c)
       
-      -- navigateTo 
+--       -- navigateTo 
+
+injectVal :: (MonadVar m, MonadZipper (WithKey % o) m, Shaped o) => o ->  m (WithKey % o)
+injectVal b = do
+    i <- mkVar
+    let (b', i') = indexTermFrom i b
+    setVar i'
+    pure b'
 
 tryReplace :: forall a m. (Show a, Alternative m, MonadVar m, Shaped a, Eq a) => SomeTyp WithKey -> a -> m (SomeTyp WithKey)
 tryReplace z@(SomeTyp @b a) b = case Typ.eqT @a @b of 
   Just Refl -> do
-    traceM ("replacing " <> prettyWithKey a <> " with " <> show b)
-    if fuse value a == b 
-    then pure z
-    else do
+    -- traceM ("replacing " <> prettyWithKey a <> " with " <> show b)
+    do
         i <- mkVar
         let (b', i') = indexTermFrom i b
         setVar i'
@@ -265,6 +286,14 @@ propLam lam = case eval' lam of
   Nothing -> False
   Just o -> size o <= size lam
 
+shrinkWith2 :: Arbitrary t => (t -> Bool) -> t -> t
+shrinkWith2 p e0 = go 0 e0 (shrink e0)
+  where
+    go i e [] = e
+    go i e (x:xs) = if p x then go i x (cycled i (shrink x)) else go (i+1) e xs
+
+    cycled i ls = case splitAt i ls of
+      (a,b) -> b ++ a
 
 shrinkWith :: Arbitrary t => (t -> Bool) -> t -> t
 shrinkWith p e0 = go e0 (shrink e0)

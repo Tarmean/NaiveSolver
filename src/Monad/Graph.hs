@@ -42,6 +42,10 @@ class (Ord k, Monad m) => MonadGraph k m | m -> k where
     getHidden :: m (S.Set k)
     default getHidden :: (m ~ t n, MonadTrans t, MonadGraph k n) => m (S.Set k)
     getHidden = lift getHidden
+    {-# INLINE getParentsMap #-}
+    {-# INLINE getChildrenMap #-}
+    {-# INLINE getAritiesMap #-}
+    {-# INLINE getHidden #-}
 
 
 
@@ -50,6 +54,9 @@ getChildren k = getChildrenMap <&> (M.findWithDefault mempty k)
 getParent :: (Ord k, MonadGraph k m) => k -> m (Maybe k)
 getParent k = getParentsMap <&> (M.lookup k)
 class MonadGraph k m => MonadGraphMut k m | m -> k where
+    changeState :: (State (GraphState k) a) -> m a
+    default changeState :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => State (GraphState k) a -> m a
+    changeState = lift . changeState
     addChild :: k -> k -> m ()
     default addChild :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => k -> k -> m ()
     addChild p c = lift (addChild p c)
@@ -84,6 +91,11 @@ class MonadGraph k m => MonadGraphMut k m | m -> k where
     default addDeps :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => M.Map k (S.Set k) -> m ()
     addDeps = lift . addDeps
 
+    reduceArity :: Int -> k -> m ()
+    default reduceArity :: (m ~ t n, MonadTrans t, MonadGraphMut k n) => Int -> k -> m ()
+    reduceArity i k = lift (reduceArity i k)
+        
+
 instance MonadCritical o m => MonadCritical o (GraphT k m)
 instance MonadZipper o m => MonadZipper o (GraphT k m)
 instance RecView o m => RecView o (GraphT k m)
@@ -112,6 +124,11 @@ popChangedNodes = do
    resetNewHidden
    pure s
 
+forgetNewlyHidden :: MonadGraphMut k m => k -> m ()
+forgetNewlyHidden k = changeState $ #newHidden %= S.delete k
+
+{-# INLINABLE isHidden #-}
+{-# INLINABLE getArity #-}
 isHidden :: MonadGraph k m => k -> m Bool
 isHidden k = getHidden <&> (S.member k)
 getArity :: MonadGraph k m => k -> m Int
@@ -125,6 +142,8 @@ forActiveReachable_ k0 f = go k0
         forM_ n $ \x -> do
            h <- isHidden x
            unless h $ go x >> f x
+{-# INLINABLE forActiveReachable1_ #-}
+{-# INLINABLE forActiveReachable_ #-}
 forActiveReachable1_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
 forActiveReachable1_ k0 f = forActiveReachable_ k0 f >> f k0
 
@@ -134,9 +153,13 @@ forReachableAll_ k0 f = go k0
       go k = do
         n <- getChildren k
         mapM_ (\x -> f x >> go x) n
+{-# INLINABLE forReachableAll_ #-}
+{-# INLINABLE forReachableAll1_ #-}
 forReachableAll1_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
 forReachableAll1_ k f = f k >> forReachableAll_ k f
 
+{-# INLINABLE forParentsAll1_ #-}
+{-# INLINABLE forParentsAll_ #-}
 forParentsAll1_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
 forParentsAll1_ k f = f k >> forParentsAll_ k f
 forParentsAll_ :: (MonadGraph k m, Ord k) => k -> (k -> m ()) -> m ()
@@ -162,14 +185,25 @@ data GraphState k = GraphState {
     newHidden :: S.Set k
 } deriving (Eq, Ord, Show, Generic)
 newtype GraphT k m a = GraphT { unGraphT :: StateT (GraphState k) m a }
-    deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut)
+    deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut, MonadFail)
 instance (Ord k, Monad m) => MonadGraph k (GraphT k m) where
+    {-# INLINE getParentsMap #-}
+    {-# INLINE getChildrenMap #-}
+    {-# INLINE getAritiesMap #-}
+    {-# INLINE getHidden #-}
     getParentsMap = GraphT (gets parentMap)
     getChildrenMap = GraphT (gets childMap)
     getAritiesMap = GraphT (gets arityMap)
     getHidden = GraphT (gets hidden)
 
 instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
+    changeState m = do
+      s <- GraphT get
+      let (a, s') = runState m s
+      GraphT $ put s'
+      pure a
+       
+    {-# INLINABLE addChild #-}
     addChild k k' = do
         getParent k' >>= \case
           Nothing -> do
@@ -189,9 +223,11 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
               #parentMap . at k' .= Just k
             forParentsAll_ k' $ \v -> GraphT (#arityMap . ix v += ar)
   
+    {-# INLINE hideNodeUnsafe #-}
     hideNodeUnsafe :: Monad m => k -> GraphT k m ()
     hideNodeUnsafe k = do
         GraphT (#hidden . at k .= Just ())
+    {-# INLINABLE deleteNode #-}
     deleteNode :: Monad m => k -> GraphT k m ()
     deleteNode k = do
         forParentsAll_ k $ \k' -> GraphT (#arityMap . ix k' -= 1)
@@ -202,15 +238,18 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
           #childMap . at k .= Nothing
           #childMap . each . at k .= Nothing
           #parentMap . at k .= Nothing
+    {-# INLINABLE unhideNode #-}
     unhideNode :: Monad m => k -> GraphT k m ()
     unhideNode k = do
         GraphT (#hidden . at k .= Nothing)
+    {-# INLINABLE markNodeAffected #-}
     markNodeAffected :: Monad m => k -> GraphT k m ()
     markNodeAffected k = GraphT (#newHidden . at k .= Just ())
 
     newlyHidden = GraphT (gets newHidden)
     resetNewHidden = GraphT (modify $ \s -> s { newHidden = S.empty })
 
+    {-# INLINABLE focusOn #-}
     focusOn t m = do
         old <- GraphT (gets hidden)
         focusing <- GraphT (gets $ \s -> nodesOf s S.\\ t)
@@ -218,6 +257,7 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
         o <- m
         GraphT $ modify $ \s -> s { hidden = S.union (hidden s S.\\ focusing) old, newHidden = mempty }
         pure o
+    {-# INLINABLE addDeps #-}
     addDeps deps0 = do
       oldDeps <- getChildrenMap
       let onlyRhs = mconcat (M.elems deps0) S.\\ S.fromList (M.keys deps0)
@@ -231,36 +271,53 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
       -- post <- GraphT get
       -- traceM ("addDeps " <> show deps <> ", newdeps " <> show newDeps <> show pred <> ", " <> show post)
       where notNull x = if S.null x then Nothing else Just x
+    reduceArity i k = do GraphT $ #arityMap . ix k -= i
 
+{-# INLINABLE hideNode #-}
+hideNode :: MonadGraphMut k m => k -> m ()
 hideNode k = do
   alreadyHidden <- isHidden k
   unless alreadyHidden $ do
       hideNodeUnsafe k
       markNodeAffected k
+{-# INLINABLE nodesOf #-}
 nodesOf :: Ord k => GraphState k -> S.Set k
 nodesOf k = S.fromAscList $ M.keys $ arityMap k
 
+
 -- hideNodesBelow :: MonadGraphMut k m => k -> m ()
 -- hideNodesBelow k = forActiveReachable1_ k $ \k' -> hideNode k'
+{-# INLINABLE deleteNodesBelow #-}
 deleteNodesBelow :: MonadGraphMut k m => k -> m ()
 deleteNodesBelow k = forActiveReachable1_ k $ \k' -> deleteNode k'
 
+{-# INLINABLE containsHidden #-}
 containsHidden :: MonadGraph k m => m (S.Set k)
 containsHidden = do
   hidden <- getHidden
   ls <- traverse parentsListAll1 (S.toList hidden)
   pure $ S.fromList $ concat ls
+{-# INLINABLE largestNodeWith #-}
 largestNodeWith :: (MonadGraph k m) => (Int -> k -> Bool) -> m (Maybe (Int,k))
 largestNodeWith p = do
     m <- getAritiesMap
     h <- getHidden
     pure $ maximumByOf each (comparing fst) [ (v,k) | (k,v) <- M.toList m, p v k, not (S.member k h) ]
+{-# INLINABLE nodeCount #-}
 nodeCount :: MonadGraph k m => m Int
 nodeCount = do
     n <- getAritiesMap
     h <- getHidden
     pure $ M.size n - S.size h
 
+{-# INLINABLE rootsOf #-}
+rootsOf :: MonadGraph k m => S.Set k -> m (S.Set k)
+rootsOf ks = do
+    o <- forM (S.toList ks) $ \k -> do
+        ps <- parentsListAll1 k
+        pure $ head $ filter (`S.member` ks) $ reverse ps
+    pure $ S.fromList o
+{-# INLINABLE getActiveRoots #-}
 getActiveRoots :: MonadGraph k m => m (S.Set k)
 getActiveRoots = do
     s <- getParentsMap
@@ -272,6 +329,7 @@ getActiveRoots = do
         _ -> x
     pure (S.map toRoot n)
 
+{-# INLINABLE getActiveNodes #-}
 getActiveNodes :: MonadGraph k m => m (S.Set k)
 getActiveNodes = do
     n <- getAritiesMap
@@ -283,18 +341,34 @@ markAllCritical = do
     traceM $ "markAllCritical " <> show nodes
     forM_ nodes $ hideNodeUnsafe
 
+{-# INLINABLE pathFromRoot #-}
 pathFromRoot :: MonadGraph k m => k -> m [k]
 pathFromRoot k = fmap reverse $ execWriterT (forParentsAll1_ k $ \k' -> tell [k'])
 
 runGraphT :: (Monad m) => GraphT Int m a -> m a
 runGraphT = flip evalStateT (GraphState M.empty M.empty M.empty S.empty S.empty) . unGraphT
 
+-- reparent :: MonadGraphMut k m => k -> k -> m ()
+-- reparent f t =
+--   setParent t =<< getParent f
+
+{-# INLINABLE setParent #-}
+setParent :: MonadGraphMut k m => k -> Maybe k -> m ()
+setParent k p = do
+    getParent k >>= \case
+      Nothing -> pure ()
+      Just old -> changeState $ #childMap . ix old . at k .= Nothing
+    changeState $ do
+        #parentMap . at k .= p
+        case p of
+          Just new -> #childMap . ix new . at k ?= ()
+          _ -> pure ()
 
 
+{-# INLINABLE navTo #-}
 navTo :: forall o k m. (RecView o m, MonadGraph k m, HasIdx o k, Show k) => Traversal' o o -> k -> m ()
 navTo l t0 = do
    path <- pathFromRoot t0
-   s <- getChildrenMap
    toPath (S.fromList path)
    cur <- cursors theIdx
    downPath (dropWhile (/= cur) path)
@@ -319,3 +393,4 @@ navTo l t0 = do
            if k == x then pure ()
            else orThrow (pullBool rightward) *> seek
        seek
+

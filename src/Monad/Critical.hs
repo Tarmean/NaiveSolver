@@ -21,17 +21,20 @@ import Monad.Snapshot (MonadSnapshot)
 import Monad.Cut (MonadCut)
 
 newtype Critical k m a = Critical { unCritical :: StateT (S.Set k) m a }
-  deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut)
+  deriving newtype (Functor, Applicative, Monad, MonadTrans, MFunctor, Alternative, MonadPlus, MonadSnapshot, MonadCut, MonadFail)
 evalCriticalT :: (Ord k, Monad m) => Critical k m a -> m a
 evalCriticalT = flip evalStateT S.empty . unCritical
 evalCritical :: (Ord k) => Critical k Identity a -> a
 evalCritical = flip evalState S.empty . unCritical
 
 instance MonadState s m => MonadState s (Critical k m) where
+
   get = lift get
   put = lift . put
 
 class Monad m => MonadCritical k m | m -> k where
+    {-# INLINE markCritical #-}
+    {-# INLINE isCritical #-}
     markCritical :: k -> m ()
     default markCritical :: (MonadCritical k n, MonadTrans t, t n ~ m) => k -> m ()
     markCritical = lift . markCritical
@@ -43,6 +46,8 @@ class Monad m => MonadCritical k m | m -> k where
     getCriticals = lift getCriticals
 
 instance (Monad m, Ord k) => MonadCritical k (Critical k m) where
+    {-# INLINE markCritical #-}
+    {-# INLINE isCritical #-}
     markCritical k = Critical $ modify $ S.insert k
     isCritical k = Critical $ gets $ S.member k
     getCriticals = Critical get

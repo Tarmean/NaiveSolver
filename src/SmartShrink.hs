@@ -172,10 +172,10 @@ withinM l m = iwithinM (indexing l) m
 -- deriving instance Monad m => MonadState (ShrinkState f o) (ShrinkT' f o r m)
 
 shrinkT :: (t -> ((a, t) -> m r -> m r) -> m r -> m r) -> ShrinkT t r m a
-shrinkT f = ShrinkT $ ZipperT $ StateT $ \s -> Amb $ \k o -> f s k o
+shrinkT f = ShrinkT $ ZipperT $ StateT $ \s -> Amb $ \idx k o -> f s (\l r -> k idx l (const r)) (o idx)
 
 runShrinkT :: (Applicative f, Monoid a1) => p -> ((a2, Top :>> p) -> f a1) -> ShrinkT (Top :>> p) a1 f a2 -> f a1
-runShrinkT o k m = runAmb (runZipperT (unShrink m) (zipper o)) (\a mr -> liftA2 (<>) (k a) mr) (pure mempty)
+runShrinkT o k m = runAmb (runZipperT (unShrink m) (zipper o)) 0 (\idx a mr -> liftA2 (<>) (k a) (mr idx)) (\_ -> pure mempty)
 
 data OraclingT m a = O (m (a, (Bool -> OraclingT m a)))
 newtype RoseForestT m a = RoseF { unForestT :: m (RoseCell m a)}
@@ -234,7 +234,7 @@ runVarTFrom idx (VarT m) = evalStateT m idx
 instance MonadVar m => MonadVar (ZipperT zip m)
 instance MonadVar m => MonadVar (StateT o m)
 newtype VarT m a = VarT { unVarT :: StateT Int m a }
-  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor, MonadSnapshot, MonadCut)
+  deriving (Functor, Applicative, Monad, MonadWriter s, MonadTrans, Alternative, MonadOut o r, MonadOracle, MFunctor, MonadSnapshot, MonadCut, MonadFail, MonadPlus)
 instance MonadZipper o m => MonadZipper o (VarT m) where
 instance RecView o n => RecView o  (VarT n)
 instance HasRec o m n => HasRec o (VarT m) (VarT n)
@@ -373,7 +373,7 @@ withRec a =
      up
      undefined
 
-class HasIdx o k | o -> k where
+class Show k => HasIdx o k | o -> k where
    theIdx :: o -> k
 
 eachChild :: (MonadZipper o m, RecView o m) => Traversal' o o -> m () -> m ()
@@ -746,7 +746,7 @@ unionBim l@(BM f g) r@(BM a b)
 
 flipChildren :: Ord m => Children m -> Parents m
 flipChildren m = M.fromList [(c, p) | (p, cs) <- M.toList m, c <- S.toList cs]
-instance HasIdx (Tree k) k where
+instance Show k => HasIdx (Tree k) k where
    theIdx (Node k _) = k
 
 treeFor :: M.Map Int (S.Set Int)
@@ -947,7 +947,7 @@ instance MonadTrans (ShrinkT o r) where
     lift sm = ShrinkT $ lift $ lift sm
 
 constContT :: Alternative m => m r -> AmbT r m a
-constContT m = Amb $ \_ g -> m <|> g
+constContT m = Amb $ \idx _ g -> m <|> g idx
 instance Alternative (ShrinkT o r m) where
     empty = ShrinkT empty
     ShrinkT x <|> ShrinkT y = ShrinkT (x <|> y)

@@ -37,7 +37,7 @@ allMatches (prog :: Program sym) k = do
         getOut _ _ = do 
             out <- use #outVec
             lift (V.freeze out >>= k)
-    flip evalStateT emptyState $ runAmb (mapM_ eval prog.ops) getOut (pure ())
+    flip evalStateT emptyState $ runAmb (mapM_ eval prog.ops) 0 (const getOut) ( \_ -> pure ())
 
 writeReg :: (MonadState (NaiveVMState (PrimState m)) m, PrimMonad m) => Int -> Reg -> m ()
 writeReg val (Temporary regId) = #tempVec $= \v -> VU.write v regId val

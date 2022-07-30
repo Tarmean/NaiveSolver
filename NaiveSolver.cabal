@@ -102,6 +102,7 @@ library
     , kure
     , lens
     , mmorph
+    , monad-control
     , mtl
     , pretty-simple
     , prettyprinter
@@ -147,6 +148,7 @@ executable NaiveSolver-exe
     , kure
     , lens
     , mmorph
+    , monad-control
     , mtl
     , pretty-simple
     , prettyprinter
@@ -193,6 +195,7 @@ test-suite NaiveSolver-test
     , kure
     , lens
     , mmorph
+    , monad-control
     , mtl
     , pretty-simple
     , prettyprinter
