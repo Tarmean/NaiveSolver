@@ -204,9 +204,9 @@ myShrinkList = runShrinkForest t $ evalCriticalT @Int $ runGraphT $ runVarTFrom 
         traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getTracker))
         pure ()
   where (t, i) = indexTermFrom 0 (toTree [1..1000])
-testP :: BTree S.Key -> Bool
+testP :: Foldable t => t S.Key -> Bool
 testP x = pushTracker (out, length x) out
-  where out = S.null $ foldr S.delete (S.fromList  [100,200,300,400,500,600,700,800,900]) x
+  where out = S.null $ foldr S.delete (S.fromList  [1,2,3,400,500,800]) x
 
 
 -- myShrinkTree :: RoseForestT Identity (WithKey % Expr)
@@ -289,10 +289,10 @@ propLam lam = case eval' lam of
 shrinkWith2 :: Arbitrary t => (t -> Bool) -> t -> t
 shrinkWith2 p e0 = go 0 e0 (shrink e0)
   where
-    go i e [] = e
-    go i e (x:xs) = if p x then go i x (cycled i (shrink x)) else go (i+1) e xs
+    go _ e [] = e
+    go i e (x:xs) = if p x then go i x (delayBads i (shrink x)) else go (i+1) e xs
 
-    cycled i ls = case splitAt i ls of
+    delayBads i ls = case splitAt i ls of
       (a,b) -> b ++ a
 
 shrinkWith :: Arbitrary t => (t -> Bool) -> t -> t
