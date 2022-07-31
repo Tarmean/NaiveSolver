@@ -40,7 +40,21 @@ def predicate(x):
     out = {100,200,300,400,500,600,700,800,900}.issubset(set(x))
     stack.append((out, len(x)))
     return out and 'FAIL' or 'PASS'
+def predicate2(x):
+    out = set(range(100,200)).issubset(set(x))
+    out = out and set(range(700,800)).issubset(set(x))
+    stack.append((out, len(x)))
+    return out and 'FAIL' or 'PASS'
+def predicate3(x):
+    out = set(range(100,110)).issubset(set(x))
+    stack.append((out, len(x)))
+    return out and 'FAIL' or 'PASS'
+def predicate4(x):
+    out = set(range(20)) == set(x)
+    stack.append((out, len(x)))
+    return out and 'FAIL' or 'PASS'
 
-print(ddmin(predicate, list(range(1000))))
+print(ddmin(predicate4, list(range(20))))
+# print(ddmin(predicate3, list(range(1000))))
 print(stack)
 

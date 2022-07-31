@@ -48,6 +48,7 @@ import Monad.Snapshot
 import Data.Coerce (coerce)
 import Monad.Cut
 import qualified Data.Set as S
+import qualified Data.Foldable as F
 
 data Var = A | B | C | D
   deriving (Show, Eq, Ord, Generic, Data, Typeable)
@@ -163,7 +164,7 @@ instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) 
 data BTree a = Leaf a | Node (BTree a) (BTree a)
   deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable, Functor)
 newtype NoShrink a = NoShrink a
-  deriving (Eq, Ord, Show, Num)
+  deriving (Eq, Ord, Show, Num, Enum)
 instance Arbitrary (NoShrink a) where
     arbitrary = undefined
     shrink _ = []
@@ -207,9 +208,13 @@ myShrinkList = runShrinkForest t $ evalCriticalT @Int $ runGraphT $ runVarTFrom 
   where (t, i) = indexTermFrom 0 (toTree [1..1000])
 
 
-testP :: (Ord a, Num a, Foldable t) => t a -> Bool
+-- testP :: (Ord a, Num a, Foldable t) => t a -> Bool
+-- testP x = pushTracker (out, length x) out
+--   where out = S.null $ foldr S.delete (S.fromList  [100,200,300,400,500,600,700,800,900]) x
+
+testP :: (Ord a, Num a, Foldable t, Enum a) => t a -> Bool
 testP x = pushTracker (out, length x) out
-  where out = S.null $ foldr S.delete (S.fromList  [100,200,300,400,500,600,700,800,900]) x
+  where out = S.isSubsetOf (S.fromList ([0..19])) (S.fromList (F.toList x))
 
 
 -- myShrinkTree :: RoseForestT Identity (WithKey % Expr)
