@@ -25,6 +25,7 @@ import System.Timeout (timeout)
 import Control.Monad
 import Monad.Snapshot()
 
+import qualified Data.List as L
 import Data.Data.Lens
 import Control.Lens
 import SmartShrink (runShrinkForest, shrinkTree, RoseForestT, downwardM, HasIdx(..), MergeMap (unMergeMap), depsMap, isRelevant, flipChildren, navigator, runVarTFrom, MonadVar (mkVar, setVar), seqForest, traceForest)
@@ -41,13 +42,14 @@ import qualified Generics.SOP as SOP
 import Control.Monad.Writer (execWriterT)
 import Control.Zipper (rightward)
 import Monad.Critical (evalCritical, evalCriticalT, getCriticals, MonadCritical)
-import ShrinkLoop (replaceNode, doShrink, smartLoop, hoistNode, GenAction, hoistInCrit)
-import Monad.Graph (MonadGraphMut (addDeps), runGraphT)
+import ShrinkLoop (replaceNode, smartLoop, hoistNode, GenAction, hoistInCrit)
+import Monad.Graph (MonadGraphMut (addDeps), runGraphT, getHidden)
 import Monad.Oracle (MonadOracle, checkpoint)
 import Monad.Snapshot
 import Data.Coerce (coerce)
 import Monad.Cut
 import qualified Data.Set as S
+import Data.Utils
 import qualified Data.Foldable as F
 
 data Var = A | B | C | D
@@ -83,6 +85,7 @@ maybeF f a = case eqT @p @t of
   Nothing -> pure a
 indexTerm :: Shaped a => a -> WithKey % a
 indexTerm = fst . indexTermFrom 0
+
 indexTermFrom :: Shaped a => Int -> a -> (WithKey % a, Int)
 indexTermFrom i0 = flip runState i0 . sequenceInterleaved distributeLaw . interleave inj
   where
@@ -163,7 +166,7 @@ instance (HasIdx (SomeTyp f) o, forall a. HasIdx (f a) o) => HasIdx (SomeTyp f) 
 
 data BTree a = Leaf a | Node (BTree a) (BTree a)
   deriving (Show, Eq, Ord, Generic, Data, Typeable, Foldable, Functor)
-newtype NoShrink a = NoShrink a
+newtype NoShrink a = NoShrink {unNoShrink :: a}
   deriving (Eq, Ord, Show, Num, Enum)
 instance Arbitrary (NoShrink a) where
     arbitrary = undefined
@@ -181,7 +184,7 @@ toTree ls = case ls of
   _ -> Node (toTree a) (toTree b)
   where
     (a,b) = splitAt (length ls `div` 2) ls
-shrinkTest2 = print . last $ fmap (fmap prettyWithKey) $ traceForest (testP . getValueFromInterleaved) $  myShrinkList
+shrinkTest2 = print . head . dropWhile ((==False) . fst) . reverse $ fmap (fmap prettyWithKey) $ traceForest (testP . getValueFromInterleaved) $  myShrinkList
 instance HasIdx (WithKey % a) Int where
     theIdx (Wrap f) = theIdx f
 
@@ -196,25 +199,41 @@ myShrinkList = runShrinkForest t $ evalCriticalT @Int $ runGraphT $ runVarTFrom 
         addDeps d
         let
           theShrinker = (replaceNode (\_ -> injectVal (Leaf 0)) childExpr)
-          otherChrinker = hoistNode childExpr <> hoistInCrit childExpr
+          -- otherChrinker =  <> 
           -- loop = do
           --   doShrink theShrinker >>= \case
           --     True -> loop
           --     False -> pure ()
         -- loop
-        smartLoop (theShrinker <> otherChrinker)
+        smartLoop theShrinker
+        traceM "THIS IS THE SECOND PART"
+        smartLoop (hoistNode childExpr <> (hoistInCrit childExpr))
+        -- traceM "THIS IS THE THRID PART"
+        -- smartLoop 
+        -- traceM "THIS IS THE THIRD PART"
+        -- smartLoop (hoistInCrit childExpr)
         traceM ("OUTPUT COUNT " <> (show $ unsafePerformIO getTracker))
         pure ()
-  where (t, i) = indexTermFrom 0 (toTree [1..1000])
+        crits <- getCriticals
+        traceM ("criticals " <> (compact crits))
+        hidden <- getHidden
+        traceM ("hidden " <> (compact hidden))
+  where (t, i) = indexTermFrom 0 (toTree [0..20])
 
 
 -- testP :: (Ord a, Num a, Foldable t) => t a -> Bool
 -- testP x = pushTracker (out, length x) out
 --   where out = S.null $ foldr S.delete (S.fromList  [100,200,300,400,500,600,700,800,900]) x
 
-testP :: (Ord a, Num a, Foldable t, Enum a) => t a -> Bool
+testP' :: (Ord a, Num a, Foldable t, Enum a) => a -> t a -> Bool
+testP' a x = pushTracker (out, length x) out
+  where out = S.isSubsetOf (S.fromList ([a..a+9])) (S.fromList (F.toList x))
+testP :: (Show (t a), Ord a, Show a, Num a, Foldable t, Enum a) => t a -> Bool
 testP x = pushTracker (out, length x) out
-  where out = S.isSubsetOf (S.fromList ([0..19])) (S.fromList (F.toList x))
+  where
+    out = S.isSubsetOf (S.fromList ([1,3,17])) (S.fromList (F.toList x))
+    !_ = trace (show x) ()
+    
 
 
 -- myShrinkTree :: RoseForestT Identity (WithKey % Expr)
@@ -337,13 +356,28 @@ eval e0 s0
         a' -> App a' b
     go _ a = a
 
+repeatedTests :: IO ()
+repeatedTests = do
+   let
+     go x
+       | x > 990 = pure []
+     go i = do
+        modifyIORef myTracker (\_ -> [])
+        deepseq (length $ shrinkWith2 (testP' i) (fmap NoShrink [0..1050::Int])) (pure())
+        o <- getTracker
+        let len = length o
+        let total = sum (map snd o)
+        os <- go (i+1)
+        pure ((unNoShrink i,total,len) : os)
+   print =<< go 0
+
 {-# NOINLINE myTracker #-}
 myTracker :: IORef [(Bool, Int)]
 myTracker = unsafePerformIO $ newIORef []
 
 {-# INLINE pushTracker #-}
 pushTracker :: (Bool, Int) -> a -> a
-pushTracker s a = unsafePerformIO (modifyIORef' myTracker (s:)) `seq` a
+pushTracker s a = unsafePerformIO (traceM (show s) *> modifyIORef' myTracker (s:)) `seq` a
 getTracker :: IO [(Bool, Int)]
 getTracker = readIORef myTracker
 

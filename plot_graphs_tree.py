@@ -12,9 +12,15 @@ quickCheck = [(False,8),(False,8),(False,8),(False,8),(False,7),(False,7),(False
 # quickCheck = [(False,1),(False,1),(True,2),(False,2),(False,1),(True,3),(False,2),(False,3),(False,1),(True,4),(False,6),(False,1),(True,7),(False,13),(False,1),(True,14),(False,13),(False,3),(True,16),(False,16),(False,13),(False,6),(True,19),(False,19),(False,13),(False,12),(True,25),(True,50)]
 
 example_data = []
+print("tree 1000")
+print("|Algorithm | Steps |Total|")
+print("|-|-|-|")
 for k,v in {'QuickCheck':quickCheck,'QuickCheck with Permutations':smartCheck, 'Adaptive Delete Blocking': smartLoop}.items():
+     length = len(v)
+     total = sum(a[1] for a in v)
+     if length > 0:
+         print("|", k, "|", length, "|", total, "|")
      example_data.extend({'Oracle Result': a, 'size': b, 'attempt': i, 'algorithm': k} for i, (a, b) in enumerate(reversed(v)))
 frame = pd.DataFrame(example_data, columns=['attempt','Oracle Result','size', 'algorithm'])
-print(frame)
 g = sns.lmplot(x='attempt', y='size', col='algorithm', hue='Oracle Result', data=frame, palette='muted', fit_reg=False, col_wrap=1)
 plt.savefig('scatters_tree_1000.png')

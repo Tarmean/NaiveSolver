@@ -28,6 +28,7 @@ import Debug.Trace (traceM)
 import Monad.Snapshot (MonadSnapshot)
 import GHC.Stack (HasCallStack, callStack)
 import Monad.Cut (MonadCut)
+import Data.Utils
 
 class (Ord k, Monad m) => MonadGraph k m | m -> k where
     getParentsMap :: m (M.Map k k)
@@ -262,7 +263,7 @@ instance (Ord k, Monad m, Show k) => MonadGraphMut k (GraphT k m) where
       oldDeps <- getChildrenMap
       let onlyRhs = mconcat (M.elems deps0) S.\\ S.fromList (M.keys deps0)
           deps = M.union deps0 (M.fromList [(k, S.empty) | k <- S.toList onlyRhs])
-          newDeps = MM.merge MM.preserveMissing MM.dropMissing (MM.zipWithMatched $ \_ a b -> a S.\\ b) deps oldDeps
+          newDeps = MM.merge MM.preserveMissing MM.dropMissing (MM.zipWithMatched $ \_ _ b -> b) deps oldDeps
           sizes = M.fromList [(k, 1+sum childSizes) | (k,vs) <- M.toList newDeps, let childSizes = map (sizes M.!) (S.toList vs)  ]
           parsMap = M.fromList [(k, p) | (p,cs) <- M.toList newDeps, k <- S.toList cs]
       -- pred <- GraphT get
@@ -288,8 +289,29 @@ nodesOf k = S.fromAscList $ M.keys $ arityMap k
 -- hideNodesBelow :: MonadGraphMut k m => k -> m ()
 -- hideNodesBelow k = forActiveReachable1_ k $ \k' -> hideNode k'
 {-# INLINABLE deleteNodesBelow #-}
-deleteNodesBelow :: MonadGraphMut k m => k -> m ()
-deleteNodesBelow k = forActiveReachable1_ k $ \k' -> deleteNode k'
+deleteNodesBelow :: (Show k, Num k, MonadGraphMut k m) => k -> m ()
+deleteNodesBelow k0 = do
+  a <- getArity k0
+  aParent <- getParent k0
+  childMap <- getChildrenMap
+  r <- execWriterT $ forReachableAll1_ k0 (\x -> do
+    s <- isHidden x
+    -- when (s && x /= k0) (error ("deleteNodesBelow: node is hidden: " <> show x))
+    tell (Endo (x:))
+    )
+  let reachable = k0:appEndo r []
+      keyMap = M.fromList [(k, ()) | k <- reachable]
+      keySet = S.fromList reachable
+  changeState $ do
+      #newHidden <>= keySet
+      #hidden %= (S.\\ keySet)
+      #childMap %= (M.\\ keyMap)
+      #arityMap %= (M.\\ keyMap)
+      #parentMap %= (M.\\ keyMap)
+      #childMap . each %= (S.\\ keySet)
+  case aParent of
+    Nothing -> pure ()
+    Just p -> forParentsAll1_ p $ \k' -> reduceArity a k'
 
 {-# INLINABLE containsHidden #-}
 containsHidden :: MonadGraph k m => m (S.Set k)
@@ -366,7 +388,7 @@ setParent k p = do
 
 
 {-# INLINABLE navTo #-}
-navTo :: forall o k m. (RecView o m, MonadGraph k m, HasIdx o k, Show k) => Traversal' o o -> k -> m ()
+navTo :: forall o k m. (HasCallStack, RecView o m, MonadGraph k m, HasIdx o k, Show k) => Traversal' o o -> k -> m ()
 navTo l t0 = do
    path <- pathFromRoot t0
    toPath (S.fromList path)

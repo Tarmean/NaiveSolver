@@ -24,7 +24,7 @@ import Data.Functor.Identity
 import Monad.Snapshot (MonadSnapshot)
 import qualified Data.Foldable as F
 
-data AmbT r m a = Amb { runAmb :: Int -> (Int -> a -> (Int -> m r) -> m r) -> (Int -> m r) -> m r }
+newtype AmbT r m a = Amb { runAmb :: Int -> (Int -> a -> (Int -> m r) -> m r) -> (Int -> m r) -> m r }
   deriving Functor
 instance MonadFail (AmbT r m) where
    fail _ = empty

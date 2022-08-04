@@ -35,6 +35,7 @@ library
       Data.Mutable.QuickSort
       Data.Mutable.Slice
       Data.Tree.Leafy
+      Data.Utils
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
