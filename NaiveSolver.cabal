@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Data.Bag
+      Data.GridPrint
       Data.Growable
       Data.Mutable.Distributive
       Data.Mutable.Each
@@ -36,6 +37,8 @@ library
       Data.Mutable.Slice
       Data.Tree.Leafy
       Data.Utils
+      DecisionDiagram
+      EggProp
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
@@ -51,7 +54,9 @@ library
       EGraph.Storage
       EGraph.Types
       EGraph.UnionFind
+      EPropTest
       FiniteDomains
+      GenericProp
       IncrementalDatalog
       IndexADT
       IndexedWalk
@@ -74,8 +79,6 @@ library
       SKI
       SmartShrink
       SmartShrinkTest
-      Test
-      TestNonempty
       Types
   other-modules:
       Paths_NaiveSolver
@@ -91,25 +94,30 @@ library
     , base >=4.7 && <5
     , bytestring
     , containers
+    , data-fix
     , deepseq
     , distributive
     , foldl
     , generic-lens
+    , generic-lens-core
     , generic-random
     , generics-sop
     , ghc-prim
     , hashable
     , indexed
+    , int-like ==0.1.*
     , kure
     , lens
     , mmorph
     , monad-control
     , mtl
+    , overeasy
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
     , quickspec
+    , recursion-schemes
     , spoon
     , text
     , transformers
@@ -137,25 +145,30 @@ executable NaiveSolver-exe
     , base >=4.7 && <5
     , bytestring
     , containers
+    , data-fix
     , deepseq
     , distributive
     , foldl
     , generic-lens
+    , generic-lens-core
     , generic-random
     , generics-sop
     , ghc-prim
     , hashable
     , indexed
+    , int-like ==0.1.*
     , kure
     , lens
     , mmorph
     , monad-control
     , mtl
+    , overeasy
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
     , quickspec
+    , recursion-schemes
     , spoon
     , text
     , transformers
@@ -184,25 +197,30 @@ test-suite NaiveSolver-test
     , base >=4.7 && <5
     , bytestring
     , containers
+    , data-fix
     , deepseq
     , distributive
     , foldl
     , generic-lens
+    , generic-lens-core
     , generic-random
     , generics-sop
     , ghc-prim
     , hashable
     , indexed
+    , int-like ==0.1.*
     , kure
     , lens
     , mmorph
     , monad-control
     , mtl
+    , overeasy
     , pretty-simple
     , prettyprinter
     , primitive
     , profunctors
     , quickspec
+    , recursion-schemes
     , spoon
     , text
     , transformers

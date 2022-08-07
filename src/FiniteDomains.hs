@@ -5,29 +5,29 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DerivingVia #-}
 module FiniteDomains where
 
 import qualified Data.Set as S
 import Types
 import Test.QuickCheck
-    ( Testable(property), Property )
+    ( Testable(property), Property, quickCheckAll )
 import Propagator
 import Control.Monad.State
 import Data.Data
 import Control.Monad.Except
-import Data.List (transpose)
--- import Prettyprinter
+import Data.List (transpose, foldl')
 import qualified Data.Map as M
 import Debug.Trace (traceM)
 import Data.Char (digitToInt)
+import GHC.Generics (Generic)
+import Data.GridPrint
+import Data.Hashable 
 
+import Data.Maybe (listToMaybe)
 
-newtype AllDifferentE a = AllDifferent { vars :: [a] }
-  deriving (Eq, Ord, Show, Foldable, Functor)
-type AllDifferent = AllDifferentE Var
-
-allDiffProp :: forall a m s0. (Ord a, MonadState s0 m, Has s0 (PropEnv (FiniteDomain a)), Show a, Typeable a, Bounded a, Enum a) => AllDifferent -> AProp AllDifferent m s0
+allDiffProp :: forall a m s0. (Ord a, MonadState s0 m, HasType (PropEnv (FiniteDomain a)) s0, Show a, Typeable a, Bounded a, Enum a) => AllDifferent -> AProp AllDifferent m s0
 allDiffProp a = toRule $ mapM_ (uncurry (propagate1 @a)) (splits mempty a.vars)
   where
     splits _ [] = []
@@ -41,15 +41,67 @@ propagate1 v os = do
     [] -> throwError (Just (S.singleton v))
     _ -> pure ()
 
+
+domDifference :: Ord a => FiniteDomain a -> FiniteDomain a -> FiniteDomain a
+domDifference a b 
+  | S.size b.members == 1 = FD (S.difference (a.members) (b.members))
+  | otherwise = a
+
+domPoint :: Ord a => FiniteDomain a -> Maybe a
+domPoint (FD a) = listToMaybe (S.toList a)
+
+
+remainder :: (Ord a, Bounded a, Enum a) => [FiniteDomain a] -> FiniteDomain a
+remainder = foldl' (domDifference) universe
+
 delDomain :: Ord a => a -> FiniteDomain a -> FiniteDomain a
 delDomain v fd = FD outp
   where outp = S.delete v fd.members
+domSingleton :: Ord a => a -> FiniteDomain a
+domSingleton v = FD (S.singleton v)
 
 data FiniteDomain a = FD { members :: S.Set a }
-  deriving (Eq, Ord, Show, Typeable)
+  deriving (Eq, Ord, Show, Typeable, Generic)
+instance Hashable a => Hashable (FiniteDomain a)
+
+fdMin :: Ord a => FiniteDomain a -> a
+fdMin (FD s) = S.findMin s
+
+fdMax :: Ord a => FiniteDomain a -> a
+fdMax (FD s) = S.findMin s
 
 newtype SudokuNum = SD { digit :: Int}
-  deriving (Eq, Ord, Show, Enum) via Int
+  deriving (Num, Real, Integral, Eq, Ord, Show, Enum, Hashable) via Int
+
+liftDom2 :: (Bounded a, Ord a) => (a -> a -> a) -> FiniteDomain a -> FiniteDomain a -> FiniteDomain a
+liftDom2 f (FD a) (FD b) = FD (S.fromList [o| x <- S.toList a, y <- S.toList b, let o = f x y, inBound o])
+  where inBound x = x >= minBound && x <= maxBound
+liftDom :: (Bounded a, Ord a) => (a -> a) -> FiniteDomain a -> FiniteDomain a
+liftDom f (FD a) = FD (S.filter inBound $ S.map f a)
+  where inBound x = x >= minBound && x <= maxBound
+instance (Bounded a, Ord a, Num a) => Real (FiniteDomain a) where
+    toRational = undefined
+instance (Bounded a, Ord a, Num a) => Num (FiniteDomain a) where
+    fromInteger = domSingleton . fromInteger
+    (+) = liftDom2 (+)
+    (*) = liftDom2 (*)
+    (-) = liftDom2 (-)
+    abs = liftDom abs
+    signum = liftDom signum
+    negate = liftDom negate
+instance Enum (FiniteDomain a) where
+   toEnum = undefined
+   fromEnum = undefined
+    
+instance (Bounded a, Ord a, Integral a) => Integral (FiniteDomain a) where
+    quot = liftDom2 quot
+    rem = liftDom2 rem
+    div = liftDom2 div
+    mod = liftDom2 mod
+    toInteger a = case (domPoint a) of
+      Just x -> toInteger x
+      Nothing -> error "Illegal toInteger"
+
 instance Bounded SudokuNum where
   minBound = SD 0
   maxBound = SD (cellWidth^(2::Int)-1)
@@ -84,46 +136,30 @@ instance (Bounded a, Enum a, Ord a) => BoundedLattice (FiniteDomain a) where
 ft :: [Int] -> FiniteDomain SudokuNum
 ft = FD . S.fromList . map (SD . succ . (`mod` cellWidth))
 
+newtype AllDifferentE a = AllDifferent { vars :: [a] }
+  deriving (Eq, Ord, Show, Foldable, Functor)
+type AllDifferent = AllDifferentE Var
+
 
 data ADTest = ADTest { testBool :: (PropEnv (Val Bool)), testEnv :: (PropEnv (FiniteDomain SudokuNum)), testAD :: (S.Set AllDifferent) }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
 
 instance (MonadState ADTest m) => PropsFor m ADTest  where
   theProps = do
      dirtNums <- popDirty @(FiniteDomain SudokuNum)
      onStruct @(S.Set AllDifferent) dirtNums (allDiffProp @SudokuNum)
      pure $ not $ S.null dirtNums
-instance Has ADTest (PropEnv (Val Bool)) where
-    getL =  (.testBool)
-    putL v s = s { testBool = v }
-instance Has ADTest (PropEnv (FiniteDomain SudokuNum)) where
-    getL =  (.testEnv)
-    putL v s = s { testEnv = v }
-instance Has ADTest (S.Set AllDifferent) where
-    getL =  (.testAD)
-    putL v s = s { testAD = v }
 
 
-data Grid = Grid { rows :: [String] }
-instance Show Grid where
-    show g = unlines g.rows
-(<+>) :: Grid -> Grid -> Grid
-(<+>) l r = Grid $ zipWith (<>) (padGrid l).rows (padGrid r).rows
-(<->)  :: Grid -> Grid -> Grid
-(<->) l r = Grid $ l.rows <> r.rows
-
-padGrid :: Grid -> Grid
-padGrid gr = Grid $ map (padTo maxW) gr.rows
+printCell :: FiniteDomain SudokuNum -> Grid
+printCell fd = box $ map hsep $ chunksOf (cellWidth) $ [ if S.member (SD $ d-1) fd.members then prettyGrid (show d) else prettyGrid " " | d <- [1..cellWidth*cellWidth]]
   where
-    maxW = maximum $ map length gr.rows
-padTo :: Int -> String -> String
-padTo i0 w = (replicate l ' ') <> w <> replicate r ' '
-  where
-    i = i0 - length w
-    l = i `div` 2
-    r = i - l
--- (<+>) :: Grid -> Grid -> Grid
--- (<+>) l r = 
+    box ls = vsep  (ov : [prettyGrid "|" <+> l <+> prettyGrid "|" | l <- ls] <> [ov])
+    ov = prettyGrid (replicate (2+cellWidth)'-')
+
+printGrid :: PropEnv (FiniteDomain SudokuNum) -> Grid
+printGrid (penv :: PropEnv (FiniteDomain SudokuNum)) = vsep $ map hsep $ chunksOf (cellWidth^(2::Int)) $ [ case penv.known M.!? d of Just c ->  printCell c; Nothing -> printCell universe | d <- [0..cellWidth^(4::Int)-1]]
+
 cellWidth :: Int
 cellWidth = 3
 testPropAD :: (Either (S.Set Var) (), ADTest)
@@ -133,19 +169,19 @@ testPropAD = flip runState (ADTest emptyPropEnv emptyPropEnv allDiffs) $ runExce
         case g of
           Nothing -> pure ()
           Just v -> out @(FiniteDomain SudokuNum) "" idx (FD $ S.singleton $ SD v)
-    theProps
+    void theProps
     traceM "hi"
     traceM . show . printGrid . (.testEnv)  =<< get
-    theProps
+    void theProps
     traceM "hi2"
     traceM . show . printGrid . (.testEnv)  =<< get
-    theProps
+    void theProps
     traceM "hi3"
     traceM . show . printGrid . (.testEnv)  =<< get
-    theProps
+    void theProps
     traceM "hi4"
     traceM . show . printGrid . (.testEnv)  =<< get
-    theProps
+    void theProps
     pure ()
   where
     allDiffs = S.fromList $ map AllDifferent (rows <> cols <> squares)
@@ -173,20 +209,7 @@ testPropAD = flip runState (ADTest emptyPropEnv emptyPropEnv allDiffs) $ runExce
 
 singleFD :: Int -> FiniteDomain SudokuNum
 singleFD d = FD $ S.singleton $ SD d
-printCell :: FiniteDomain SudokuNum -> Grid
-printCell fd = box $ map hsep $ chunksOf (cellWidth) $ [ if S.member (SD $ d-1) fd.members then pretty (show d) else pretty " " | d <- [1..cellWidth*cellWidth]]
-  where
-    box ls = vsep  (ov : [pretty "|" <+> l <+> pretty "|" | l <- ls] <> [ov])
-    ov = pretty (replicate (2+cellWidth)'-')
 
-hsep :: [Grid] -> Grid
-hsep = foldl1 (<+>)
-vsep :: [Grid] -> Grid
-vsep = foldl1 (<->)
-pretty :: String -> Grid
-pretty s = Grid [s]
-printGrid :: PropEnv (FiniteDomain SudokuNum) -> Grid
-printGrid (penv :: PropEnv (FiniteDomain SudokuNum)) = vsep $ map hsep $ chunksOf (cellWidth^(2::Int)) $ [ case penv.known M.!? d of Just c ->  printCell c; Nothing -> printCell universe | d <- [0..cellWidth^(4::Int)-1]]
 
 
 
@@ -215,11 +238,12 @@ prop_disj_commutative = property $ \a b -> (ft a ||| ft b) == (ft b ||| ft a)
 prop_disj_absorbing = property $ \a -> ft a ||| top == top
 prop_disj_neutral = property $ \a -> ft a ||| bot == ft a
 prop_disj_growing = property $ \a b -> ft a `contains` (ft a ||| ft b)
--- return []
--- checkAll :: IO Bool
--- checkAll = $quickCheckAll
 --
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
 chunksOf i s = a : chunksOf i b
  where (a,b) = splitAt i s
+
+return []
+checkAll :: IO Bool
+checkAll = $quickCheckAll

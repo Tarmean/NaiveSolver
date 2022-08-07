@@ -60,6 +60,28 @@ packages:
     subdir: src
     git: https://github.com/Tarmean/twee
     commit: cc0bc1248fc4380a10c9854e504d446951da7091
+- completed:
+    name: overeasy
+    version: 0.1.0
+    git: https://github.com/Tarmean/overeasy
+    pantry-tree:
+      size: 1614
+      sha256: c1e589dce85d8123efd4ade7905403054070ce38c073cbb3023a5783ffc9c590
+    commit: 0a1932cb1af4674524f78a3bbbe63bfbbe0d5479
+  original:
+    git: https://github.com/Tarmean/overeasy
+    commit: 0a1932cb1af4674524f78a3bbbe63bfbbe0d5479
+- completed:
+    name: int-like
+    version: 0.1.0
+    git: git@github.com:Tarmean/int-like.git
+    pantry-tree:
+      size: 1134
+      sha256: b971e0e6437ab8c9076ff2419b3eb1a84570d7dcbfd08046a82623f4d533f25b
+    commit: 69165b19c01b64957e36cfcb51e09f4ec99b6e89
+  original:
+    git: git@github.com:Tarmean/int-like.git
+    commit: 69165b19c01b64957e36cfcb51e09f4ec99b6e89
 snapshots:
 - completed:
     size: 554661

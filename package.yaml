@@ -57,6 +57,13 @@ dependencies:
 - StrictCheck
 - generics-sop
 - monad-control
+- generic-lens-core
+- overeasy
+- int-like >= 0.1 && < 0.2
+- recursion-schemes
+- unordered-containers
+- data-fix
+# - uniter
 library:
   source-dirs: src
 ghc-options:

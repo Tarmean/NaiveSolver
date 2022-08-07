@@ -47,6 +47,10 @@ extra-deps:
   commit: cc0bc1248fc4380a10c9854e504d446951da7091
   subdirs:
     - src
+- git: https://github.com/Tarmean/overeasy
+  commit: 0a1932cb1af4674524f78a3bbbe63bfbbe0d5479
+- git: git@github.com:Tarmean/int-like.git
+  commit: 69165b19c01b64957e36cfcb51e09f4ec99b6e89
   # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a

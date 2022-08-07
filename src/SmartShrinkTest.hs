@@ -218,7 +218,7 @@ myShrinkList = runShrinkForest t $ evalCriticalT @Int $ runGraphT $ runVarTFrom 
         traceM ("criticals " <> (compact crits))
         hidden <- getHidden
         traceM ("hidden " <> (compact hidden))
-  where (t, i) = indexTermFrom 0 (toTree [0..20])
+  where (t, i) = indexTermFrom 0 (toTree [0..1000])
 
 
 -- testP :: (Ord a, Num a, Foldable t) => t a -> Bool
@@ -231,8 +231,8 @@ testP' a x = pushTracker (out, length x) out
 testP :: (Show (t a), Ord a, Show a, Num a, Foldable t, Enum a) => t a -> Bool
 testP x = pushTracker (out, length x) out
   where
-    out = S.isSubsetOf (S.fromList ([1,3,17])) (S.fromList (F.toList x))
-    !_ = trace (show x) ()
+    out = S.isSubsetOf (S.fromList ([100,200,300,400,500,600,700,800,900])) (S.fromList (F.toList x))
+    -- !_ = trace (show x) ()
     
 
 
@@ -377,7 +377,7 @@ myTracker = unsafePerformIO $ newIORef []
 
 {-# INLINE pushTracker #-}
 pushTracker :: (Bool, Int) -> a -> a
-pushTracker s a = unsafePerformIO (traceM (show s) *> modifyIORef' myTracker (s:)) `seq` a
+pushTracker s a = unsafePerformIO (modifyIORef' myTracker (s:)) `seq` a
 getTracker :: IO [(Bool, Int)]
 getTracker = readIORef myTracker
 

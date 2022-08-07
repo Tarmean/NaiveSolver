@@ -16,6 +16,10 @@ import Test.QuickCheck (Testable (property))
 import Data.Maybe (isNothing, isJust)
 import Test.QuickCheck.All (quickCheckAll)
 import Test.QuickCheck.Property (Property)
+import qualified Prettyprinter as P
+
+instance P.Pretty e => P.Pretty (Range e) where
+  pretty (Range l r) = P.pretty l P.<> P.pretty "..." P.<> P.pretty r
 
 ft :: (Maybe Int, Maybe Int) -> Range Int
 ft (a,b)
@@ -156,6 +160,7 @@ instance (Ord a, Num a) => PLattice (Range a) where
       where
         tryRange Nothing Nothing = IsTop
         tryRange x y = Is $ Range x y
+
 
 instance (Num a, Ord a) => BoundedLattice (Range a) where
     bot = Range (Just 1) (Just 0)

@@ -327,7 +327,6 @@ class CritShrink(Shrink):
         self.stop_implicit(out)
         return out
 
-        
 class BlockShrink(Shrink):
     def handle_unblocked(self):
         self.block(set(self.state))

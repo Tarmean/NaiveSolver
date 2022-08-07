@@ -40,12 +40,12 @@ markKnown learned s = execState (go learned) (mempty, s)
       then go xs
       else do
         occurences <- use (_2 . #occursIn . at x . non mempty)
+        modify $ _1 . at x .~ Just ()
         left <- forM (S.toList occurences) $ \occ -> do
             i <- use (_2 . #unknownChildren . at occ)
             case i of
               Nothing -> pure Nothing
               Just 1 -> do
-                modify $ _1 . at x .~ Just ()
                 _2 . #unknownChildren . at occ .= Nothing
                 pure $ Just occ
               Just n -> do

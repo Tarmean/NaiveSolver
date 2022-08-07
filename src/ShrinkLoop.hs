@@ -9,7 +9,7 @@ import Monad.Zipper (RecView, MonadZipper (cursor, setCursor))
 import Control.Lens
 import SmartShrink (HasIdx (theIdx), depsMap)
 import Control.Monad (when)
-import Debug.Trace (traceM)
+-- import Debug.Trace (traceM)
 import qualified Data.Set as S
 import Monad.Snapshot (MonadSnapshot(..))
 import Control.Monad.State
@@ -27,8 +27,8 @@ import GHC.Stack
 import Data.Utils
 
 
--- traceM :: Monad m => String -> m ()
--- traceM _ = pure ()
+traceM :: Monad m => String -> m ()
+traceM _ = pure ()
 
 newtype GenAction m = GenAction { getAction :: Int -> m Int }
 {-# INLINABLE unAction #-}
@@ -288,7 +288,7 @@ hoistInCrit l = GenAction $ \limit -> cut $ do
 
     siblings <- getChildren parent
     kain <- pick siblings
-    kainHidden <-  isHidden kain
+    kainHidden <- isHidden kain
     guard (not kainHidden)
 
 
