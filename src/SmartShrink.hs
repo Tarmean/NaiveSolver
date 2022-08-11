@@ -22,6 +22,7 @@
 {-# LANGUAGE IncoherentInstances #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- | Module with a bunch of shrinking stuff, most of it obsoleted by zipper based approach
 module SmartShrink where
 
 import Twee.Pretty

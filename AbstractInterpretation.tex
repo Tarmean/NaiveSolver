@@ -1,0 +1,21 @@
+
+
+\begin{align}
+(a \dots b) + (c \dots d) &= a+c \dots b+d \\
+(a \dots b) - (c \dots d) &= a-d \dots b-c \\
+(a \dots b) \times (c \dots d) &= min(a \times c, a \times d, b \times c, b \times d) \dots max(a \times c, a \times d, b \times c, b \times d) \\
+
+abs(a \dots b) = \begin{cases}
+\bot & \text{if } \bot = a \dots b \\
+\top & \text{if } \top = a \dots b \\
+abs(b) \dots \infty & \text{if } a = -\infty \\
+0 \dots max(abs(a), abs(b)) & \text{if } a < 0 \text{ and } b > 0 \\
+abs(a) \dots abs(b) & \text{otherwise }
+\end{cases}\\
+
+sign(a \dots b) = \begin{cases}
+ \bot & \text{ if } a \dots b = \bot \\
+ l \sqcap r & \text{where } l = sign(a) \dots \infty \text{ and } r = -\infty \dots sign(b) \\
+\end{cases}
+
+

@@ -25,7 +25,9 @@ source-repository head
 
 library
   exposed-modules:
+      ClusterEGraph
       Data.Bag
+      Data.BitVector
       Data.GridPrint
       Data.Growable
       Data.Mutable.Distributive
@@ -38,7 +40,6 @@ library
       Data.Tree.Leafy
       Data.Utils
       DecisionDiagram
-      EggProp
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
@@ -117,6 +118,7 @@ library
     , primitive
     , profunctors
     , quickspec
+    , random
     , recursion-schemes
     , spoon
     , text
@@ -168,6 +170,7 @@ executable NaiveSolver-exe
     , primitive
     , profunctors
     , quickspec
+    , random
     , recursion-schemes
     , spoon
     , text
@@ -220,6 +223,7 @@ test-suite NaiveSolver-test
     , primitive
     , profunctors
     , quickspec
+    , random
     , recursion-schemes
     , spoon
     , text

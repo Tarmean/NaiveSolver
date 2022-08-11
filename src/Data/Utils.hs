@@ -3,6 +3,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Prettyprinter as P
 import qualified Prettyprinter.Render.String as P
+import Control.Monad.State (evalState, get, put)
 compact :: (Ord a, Show a, Foldable t, Num a) => t a -> String
 compact t = L.intercalate "," $ go0 $ L.sort $ F.toList t
   where
@@ -23,3 +24,18 @@ pprint :: P.Pretty a => a -> IO ()
 pprint = putStrLn . docToString . P.pretty
 pshow :: P.Pretty a => a -> String
 pshow = docToString . P.pretty
+
+zipFoldableWith :: (Traversable f) => (a -> b -> c) -> f a -> f b -> f c
+zipFoldableWith f xs ys 
+  | length ls /= length rs = error "zipFoldableWith: length doesn't match"
+  | otherwise = evalState (traverse putBack xs) os
+   where
+     ls = F.toList xs
+     rs = F.toList ys
+     os = zipWith f ls rs
+
+     putBack _ = do
+        s <- get
+        case s of
+          x:vs -> put vs >> return x
+          [] -> error "zipFoldableWith: empty state"

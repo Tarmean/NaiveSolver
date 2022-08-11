@@ -5,6 +5,8 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+-- | Propagate using abstract domain
+-- Propagator logic moved into egraph library fork
 module Propagator where
 import qualified Data.Set as S
 import Types
@@ -194,7 +196,7 @@ instance Ord e => PLattice (ClauseSet e) where
          bothOld = S.intersection oldL oldR
 
          new' = bothNew S.\\ bothOld
-instance (Ord e, Show e) => IsLit (ClauseSet e) where
+instance (Ord e, Show e) => IsLit Var (ClauseSet e) where
   isL _ = pempty
   notL _ = pempty
   maxSplitVar _ = -1
@@ -228,7 +230,7 @@ instance (RegularSemigroup e, Ord e, PSemigroup e) => RegularSemigroup (PropEnv 
         merged = M.merge M.preserveMissing M.dropMissing (M.zipWithMaybeMatched k) b e
         k _ x y = x ==>? y
 
-instance {-# OVERLAPPING #-} IsLit (PropEnv (Val Bool)) where
+instance {-# OVERLAPPING #-} IsLit Var (PropEnv (Val Bool)) where
   isL s = unWrap $ injectValue s (Val True)
   notL s = unWrap $ injectValue s (Val False)
   maxSplitVar _ = -1
@@ -237,7 +239,7 @@ instance {-# OVERLAPPING #-} IsLit (PropEnv (Val Bool)) where
       box Nothing = IsFalse
       box (Just a) = Iff a
   evalVar v e = unVal <$> known e M.!? v
-instance (RegularSemigroup a, Show a, Ord a, PLattice a) =>  IsLit (PropEnv a) where
+instance (RegularSemigroup a, Show a, Ord a, PLattice a) =>  IsLit Var (PropEnv a) where
   isL _ = pempty
   notL _ = pempty
   maxSplitVar _ = -1
@@ -286,7 +288,7 @@ dbg s = pure () -- traceM s
 addElem :: forall s. (Debug s, PSemigroup s, PContains s) => String -> Var -> s -> S.Set Var -> PropEnv s -> Either (S.Set Var) (PropEnv s, Change)
 addElem dbgS var new rns PropEnv {..} = case M.lookup var known of
     Nothing -> Right (PropEnv (S.insert var dirty) (M.insert var new known) (M.insert var rns reason), Replace)
-    Just old -> case compareC new old of
+    Just old -> case containment new old of
                     Just LT -> do
                       dbg ("Replace(" <> showType @s  <> "-" <> dbgS <> ") v" <> show var <> ": " <> show old <> " -> " <> show new)
                       Right (PropEnv (S.insert var dirty) (M.insert var new known) (M.insert var rns reason), Replace)

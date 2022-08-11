@@ -5,6 +5,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+-- | growable mutable vec
+-- Stupidly unsafe, uses slicing logic to mask uninitialized but allocated bits
 module Data.Growable where
 import Control.Lens
 import qualified Data.Vector.Generic.Mutable as V

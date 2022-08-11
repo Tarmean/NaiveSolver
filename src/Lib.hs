@@ -3,7 +3,10 @@ module Lib
     ) where
 
 import qualified Text.Pretty.Simple as P
+import EPropTest
 import SmartShrinkTest (prettyWithKey, propLam, getValueFromInterleaved, shrinkTest2)
+import Data.Maybe
 import SmartShrink (traceForest)
 someFunc :: IO ()
-someFunc = shrinkTest2 -- mapM_ print $ fmap (fmap prettyWithKey) $ traceForest (not . propLam . getValueFromInterleaved) $  myShrinkTree
+someFunc = printSudoku $ fixChoice testEg4
+-- someFunc = shrinkTest2 -- mapM_ print $ fmap (fmap prettyWithKey) $ traceForest (not . propLam . getValueFromInterleaved) $  myShrinkTree

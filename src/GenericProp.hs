@@ -3,6 +3,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+-- | Turn tuples of propagators into propagators of tuples
+-- Mostly obsolete because egraphs do it better
 module GenericProp where
 
 
@@ -138,7 +140,7 @@ instance (PMonoid a,PMonoid b,PMonoid c,PMonoid d, TryNormalize (a,b,c,d), Regul
 
 newtype Compound a = Compound { getCompound :: a } deriving (Eq,Ord,Show, PSemigroup, PLattice, PMonoid, RegularSemigroup, BoundedLattice, TryNormalize)
 
-instance (HasType (PropEnv (Val Bool)) (a,b,c,d), Ord a, Ord b, Ord c, Ord d, BoundedLattice a, BoundedLattice b, BoundedLattice c, BoundedLattice d, TryNormalize(a,b,c,d), RegularSemigroup (a,b,c,d), Show(a,b,c,d), IsLit d, IsLit c, IsLit b, IsLit a) => IsLit (a,b,c,d) where
+instance (v ~ Var,  HasType (PropEnv (Val Bool)) (a,b,c,d), Ord a, Ord b, Ord c, Ord d, BoundedLattice a, BoundedLattice b, BoundedLattice c, BoundedLattice d, TryNormalize(a,b,c,d), RegularSemigroup (a,b,c,d), Show(a,b,c,d), IsLit v d, IsLit v c, IsLit v b, IsLit v a) => IsLit v (a,b,c,d) where
   isL v = injectValue v (Val True)
   notL v = injectValue v (Val False)
   maxSplitVar (a,b,c,d) = maximum [maxSplitVar a, maxSplitVar b, maxSplitVar c, maxSplitVar d]
@@ -166,7 +168,7 @@ instance (HasType (PropEnv (Val Bool)) (a,b,c,d), Ord a, Ord b, Ord c, Ord d, Bo
 --     doProp :: f Var -> AProp f m s
 -- class ForProps a where
 --    forProps :: (forall p. DoProp p a =>  PropEnv p) -> m ()
-trySplit :: IsLit a => Var -> a -> (Bool, LatticeVal a, LatticeVal a)
+trySplit :: IsLit v a => v -> a -> (Bool, LatticeVal a, LatticeVal a)
 trySplit v x = case splitLit v x of
   Nothing -> (False, Is x,Is x)
   Just (a,b) -> (True, inj a, inj b)
@@ -176,13 +178,13 @@ trySplit v x = case splitLit v x of
     inj (Iff y) = Is y
     inj _ = error "illegal if"
 
-mkRange :: Int -> Int -> Int -> DD TestType
+mkRange :: Int -> Int -> Int -> DD v TestType
 mkRange v i j = Iff (injectValue v (i...j) :: TestType)
 
 
 
-test1 :: DD TestType
+test1 :: DD Var TestType
 test1 = D.ifte 1 (mkRange 2 3 10) (mkRange 2 1 5)
 
-test2 :: DD TestType
+test2 :: DD Var TestType
 test2 = Iff (injectClause (Plus 2 2 3 :: Plus))

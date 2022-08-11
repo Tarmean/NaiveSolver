@@ -63,6 +63,9 @@ dependencies:
 - recursion-schemes
 - unordered-containers
 - data-fix
+# - Graphalyze
+# - graphviz>=2999.20
+- random
 # - uniter
 library:
   source-dirs: src

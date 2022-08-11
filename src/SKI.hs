@@ -1,3 +1,5 @@
+-- | Play with ski compilation to apply first order rewriting to extensional functions
+-- Explicit substitution calculi seem nicer so far
 module SKI where
 import qualified Data.Set as S
 -- Play with ideas from "λ to SKI, Semantically: Declarative Pearl"

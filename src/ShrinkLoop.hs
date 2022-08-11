@@ -1,6 +1,9 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE LambdaCase #-}
+-- | Sketch of shrinking algorithm mixed with zipper tactics
+-- Look at shrink_list.py in project root for a less weird
+-- representation of the algorithm
 module ShrinkLoop where
 import Monad.Graph
 import Monad.Oracle

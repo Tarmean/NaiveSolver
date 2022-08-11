@@ -1,4 +1,6 @@
 {-# LANGUAGE MultiWayIf #-}
+-- | Decision trees labeled by lattices
+-- Propagates information that holds accross branches upwards
 module DecisionDiagram where
 import Types
 import Test.QuickCheck hiding ((==>))
@@ -27,9 +29,9 @@ bddTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (B
 
 
 
-type BDD = DD (PMap Var (Val Bool))
+type BDD = DD Var (PMap Var (Val Bool))
 
-kOp :: (P.Pretty a, IsLit a) => a -> (DD a -> DD a -> Maybe (DD a)) -> DD a -> DD a -> DD a
+kOp :: (Ord v, P.Pretty a, IsLit v a) => a -> (DD v a -> DD v a -> Maybe (DD v a)) -> DD v a -> DD v a -> DD v a
 kOp ctx0 f = go ctx0
   where
     -- go p l r
@@ -50,16 +52,16 @@ kOp ctx0 f = go ctx0
             Nothing -> IsFalse
             Just ctxL -> go ctxL ly ry
         -- showThis tag a = a `seq` trace (tag <> show a) a
-        (lx, ly) 
-          | lv == v = split v l
-          | otherwise = (l,l)
-        (rx, ry)
-          | rv == v = split v r
-          | otherwise = (r,r)
-        v = max lv rv
+        (lx, ly) = split v l
+        (rx, ry) = split v r
+        v = maxM lv rv
         lv = varOf l
         rv = varOf r
-kAnd :: (P.Pretty a, IsLit a) => DD a -> DD a -> DD a
+        maxM Nothing Nothing = error "boo"
+        maxM Nothing (Just a) = a
+        maxM (Just a) Nothing = a
+        maxM (Just a) (Just b) = max a b
+kAnd :: (Ord v, P.Pretty a, IsLit v a) => DD v a -> DD v a -> DD v a
 kAnd = kOp pempty step
   where
     step IsTrue a = Just a
@@ -72,7 +74,7 @@ kAnd = kOp pempty step
     step a b 
       | a == b = Just a
     step _ _ = Nothing
-kOr :: (P.Pretty a, IsLit a) => DD a -> DD a -> DD a
+kOr :: (Ord v, P.Pretty a, IsLit v a) => DD v a -> DD v a -> DD v a
 kOr = kOp pempty step
   where
     step IsFalse a = Just a
@@ -91,24 +93,24 @@ kOr = kOp pempty step
 
 data Tag = Absorbing | Neutral
 
-varOf :: IsLit s => DD s -> Var
-varOf (If v s _ _) = max (maxSplitVar s) v
-varOf (Iff  s) = maxSplitVar s
-varOf _ = (-1)
+varOf :: (Ord v) => DD v s -> Maybe v
+varOf (If v s _ _) = Just v -- max (maxSplitVar s) v
+varOf (Iff  s) = Nothing -- maxSplitVar s
+varOf _ = Nothing
 
 splitMap :: (a -> (b,c)) -> [a] -> ([b], [c])
 splitMap f ls = (fmap fst ls', fmap snd ls')
     where ls' = fmap f ls
 
--- mOr :: IsLit s => [DD s] -> DD s
+-- mOr :: IsLit v s => [DD v s] -> DD v s
 -- mOr inp = go (inj inp)
 --   where
---     goRec :: IsLit s => [DD s] -> M.Map Var [DD s] -> DD s
+--     goRec :: IsLit v s => [DD v s] -> M.Map Var [DD v s] -> DD v s
 --     goRec a e'
 --       | IsTrue `elem` a = IsTrue
 --       | otherwise = go (M.unionWith (<>) (inj $ filter (/= IsFalse) a) e')
---     -- go :: M.Map Var [DD s] -> DD s
---     go :: IsLit s => M.Map Var [DD s] -> DD s
+--     -- go :: M.Map Var [DD v s] -> DD v s
+--     go :: IsLit v s => M.Map Var [DD v s] -> DD v s
 --     go e
 --       | trace ("mOr go " ++ show e) False = undefined
 --     -- FIXME: this is horribly inefficient:
@@ -131,7 +133,7 @@ splitMap f ls = (fmap fst ls', fmap snd ls')
 --                 | null ls -> IsFalse
 --                 | IsTrue `elem` ls -> IsTrue
 --                 | otherwise -> iff v l r
---     inj :: IsLit s => [DD s] -> M.Map Var [DD s]
+--     inj :: IsLit v s => [DD v s] -> M.Map Var [DD v s]
 --     inj = M.fromListWith (<>) . map mkTag
 --     -- mkTag i@(And s _)
 --     --   | sVar > lVar = (sVar, [i])
@@ -140,13 +142,13 @@ splitMap f ls = (fmap fst ls', fmap snd ls')
 --     --     sVar = maxSplitVar s
 --     --     lVar = varOf i
 --     mkTag i = (varOf i, [i])
-split :: IsLit s => Var -> DD s -> (DD s, DD s)
-split v (If v' s l r)
+split :: (Eq v, IsLit v s )=> v -> DD v s -> (DD v s, DD v s)
+split v w@(If v' s l r)
   | v == v' = case splitLit v s of
      Nothing -> (withDomain s l, withDomain s r)
      Just (sl, sr) -> (splitMkAnd sl l, splitMkAnd sr r)
   | otherwise = case splitLit v s of
-     Nothing -> error "Illegal split"
+     Nothing -> (w,w)
      Just (sl, sr) -> (splitMkIf v' sl l r, splitMkIf v' sr l r)
 
   where
@@ -154,7 +156,7 @@ split v (If v' s l r)
     splitMkIf _ IsFalse _ _ = IsFalse
     splitMkIf var (Iff s') x y = If var s' x y
     splitMkIf _ _ _ _ = undefined
-    splitMkAnd :: IsLit s => DD s -> DD s -> DD s
+    splitMkAnd :: IsLit v s => DD v s -> DD v s -> DD v s
     splitMkAnd IsTrue a = a
     splitMkAnd IsFalse _ = IsFalse
     splitMkAnd (Iff s') a = withDomain s' a
@@ -171,7 +173,7 @@ split v (Iff s) = case splitLit v s of
     Nothing -> (iff s, iff s)
 split _ a = (a,a)
 
-withDomain :: IsLit s => s -> DD s -> DD s
+withDomain :: IsLit v s => s -> DD v s -> DD v s
 withDomain s (If v s' l r) = case s <?> s' of
    Nothing -> IsFalse
    Just s'' -> If v s'' l r
@@ -186,7 +188,7 @@ withDomain s (Iff s') = case s <?> s' of
 liftMaybe :: Applicative m => Maybe s -> MaybeT m s
 liftMaybe = MaybeT . pure
 
-withEnv :: IsLit s => s -> State s a -> State s a
+withEnv :: IsLit v s => s -> State s a -> State s a
 withEnv s m = do
   env <- get
   o <- case s <?> env of
@@ -200,7 +202,7 @@ withEnv s m = do
 -- foo =  mAnd [If 2 IsTrue IsFalse, If 1 IsTrue IsFalse]
 
 
-simplify :: forall s. IsLit s => DD s -> State s (Either (DD s) (DD s))
+simplify :: forall s v. IsLit v s => DD v s -> State s (Either (DD v s) (DD v s))
 -- simplify (And s ls) = do
 --     (a,b) <- partitionEithers <$> (traverse simplify $ S.toList ls)
 --     env <- get
@@ -212,7 +214,7 @@ simplify (If v s l r) = do
       Nothing -> pure (Right IsFalse)
       Just env' -> do
         put env'
-        o <- case evalVar @s v env of
+        o <- case evalVar @v @s v env of
             Nothing -> pure $ Right $ If v (env ==> env') l r
             Just True -> simplify l
             Just False -> simplify r
@@ -226,7 +228,7 @@ simplify (Iff s) = do
 simplify IsTrue = pure $ Right IsTrue
 simplify IsFalse = pure $ Right IsFalse
 -- simplify a@(Leaf _) = pure $ Right a
-simplifyAnd :: IsLit s => DD s -> State s (Either (DD s) (DD s))
+simplifyAnd :: IsLit v s => DD v s -> State s (Either (DD v s) (DD v s))
 -- simplifyAnd (Leaf l) = do
 --   env <- get
 --   case inEnv env l of
@@ -254,7 +256,7 @@ flipLit (L v b) = L v (not b)
 
 type SolveEnv = M.Map Var Bool
 
-mNot :: (InverseSemigroup s, IsLit s) => DD s -> DD s
+mNot :: (Ord v, InverseSemigroup s, IsLit v s) => DD v s -> DD v s
 mNot (If v s t f) = If v (inv s) (mNot t) (mNot f)
 mNot (Iff s) = iff (inv s)
 -- mNot (And s xs) = mOr $ (And (inv s) mempty:) $ map mNot $ S.toList xs
@@ -271,12 +273,12 @@ mLitN v = Iff (notL v)
 
 
 
-orBot :: Maybe s -> DD s
+orBot :: Maybe s -> DD v s
 orBot Nothing = IsFalse
 orBot (Just s) = Iff s
 
 
-minusDomain :: RegularSemigroup s => s -> DD s -> DD s
+minusDomain :: RegularSemigroup s => s -> DD v s -> DD v s
 minusDomain s1 (Iff s2) = case s1 ==>? s2 of
     Nothing -> IsTrue
     Just s -> Iff s
@@ -286,52 +288,42 @@ minusDomain _ a = a
 (&) :: Ord a => S.Set a -> a -> S.Set a
 a & b = S.insert b a
 
-joinDomain :: PMonoid s => DD s -> DD s -> Maybe s
+joinDomain :: PMonoid s => DD v s -> DD v s -> Maybe s
 joinDomain (If _ s1 _ _) (If _ s2 _ _) = s1 <?> s2
 joinDomain (Iff s1) (If _ s2 _ _) = s1 <?> s2
 joinDomain (If _ s1 _ _) (Iff s2) = s1 <?> s2
 joinDomain (Iff s1) (Iff s2) = s1 <?> s2
 joinDomain _ _ = Just pempty
-meetDomain :: (PLattice s) => DD s -> DD s -> LatticeVal s
+meetDomain :: (PLattice s) => DD v s -> DD v s -> LatticeVal s
 meetDomain (If _ s1 _ _) (If _ s2 _ _) = s1 <||> s2
 meetDomain (Iff s1) (If _ s2 _ _) = s1 <||> s2
 meetDomain (If _ s1 _ _) (Iff s2) = s1 <||> s2
 meetDomain (Iff s1) (Iff s2) = s1 <||> s2
 meetDomain _ _ = IsTop
 
-ifte :: (IsLit s) => Var -> DD s -> DD s -> DD s
-ifte v a b
-  | Just o <- cofactor True v a b = o
-  | Just o <- cofactor False v b a = o
+ifte :: (Eq v, IsLit v s) => v -> DD v s -> DD v s -> DD v s
 ifte v a b = case meetDomain a b of
    IsTop -> ifteNRec v a b
    IsBot -> IsFalse
    Is s -> withDomain s $ ifteNRec v (minusDomain s a) (minusDomain s b)
 
-ifteNRec :: (IsLit s) => Var -> DD s -> DD s -> DD s
+ifteNRec :: (Eq v, IsLit v s) => v -> DD v s -> DD v s -> DD v s
 ifteNRec _ a b | a == b = a
 ifteNRec v IsFalse a = withDomain (notL v) a
 ifteNRec v a IsFalse = withDomain (isL v) a
 ifteNRec v a b = If v pempty a b
 
-cofactor :: IsLit s => Bool -> Var -> (DD s) -> (DD s) -> Maybe (DD s)
--- cofactor b v l (And s ls)
---   | l `S.member` ls = Just $ gAnd' [l,  iff' v b IsTrue (gAndS s $ S.delete l ls)]
---    where
---      iff' a True x y  = iff a x y
---      iff' a False x y = iff a y x
-cofactor _ _ _ _ = Nothing
 
 -- testCofactor = cofactor (isL 3) (Leaf $ isL 1) (gAnd' [Leaf $ isL 1, Leaf $ isL 2])
-gAnd' :: IsLit s => [DD s] -> DD s
+gAnd' :: IsLit v s => [DD v s] -> DD v s
 gAnd' b = gAnd b
-gAndS :: IsLit s => s -> [DD s] -> DD s
+gAndS :: IsLit v s => s -> [DD v s] -> DD v s
 gAndS s b = withDomain s $ gAnd b
 -- 
 
 
 
-gAnd :: (IsLit s) => [DD s] -> DD s
+gAnd :: (IsLit v s) => [DD v s] -> DD v s
 gAnd ls 
   | null ls = IsTrue
   | otherwise = foldr1 flatAnd ls
@@ -354,7 +346,7 @@ gAnd ls
   --         | IsFalse `S.member` S.fromList xs -> IsFalse
   --       xs -> And env (S.fromList xs)
   -- where
-  --   flattenEnv :: (IsLit s) => [DD s] -> Maybe s
+  --   flattenEnv :: (IsLit v s) => [DD v s] -> Maybe s
   --   flattenEnv es = pempty -- foldl merge1 (Just pempty) [s | And s _ <- es]
   --   merge1 Nothing _ = Nothing
   --   merge1 (Just m) s = m <?> s
@@ -369,7 +361,7 @@ testGroupAnd = quickCheck $ \bs ->  gAnd (map boolToDD bs) == boolToDD (and bs)
 testGroupOr :: IO ()
 testGroupOr = quickCheck $ \bs -> gAnd (map boolToDD bs) == boolToDD (and bs)
   
-litAnd :: (IsLit s) => s -> DD s -> DD s
+litAnd :: (IsLit v s) => s -> DD v s -> DD v s
 litAnd l a = withDomain l a
 
 
@@ -454,7 +446,7 @@ doesTerminate :: BExpr -> IO Bool
 doesTerminate = fmap isJust . timeout 12000 . (\x -> x `seq` pure ()) . toBDDNaive
 
 -- testSplit = split 1 $ And (
--- mAnd :: forall s. (IsLit s, PMonoid s) => [DD s] -> DD s
+-- mAnd :: forall s. (IsLit v s, PMonoid s) => [DD v s] -> DD v s
 -- mAnd inp
 --   | trace ("mAnd: " ++ show inp) False = undefined
 -- mAnd inp = flip evalState pempty $ do
@@ -494,7 +486,7 @@ doesTerminate = fmap isJust . timeout 12000 . (\x -> x `seq` pure ()) . toBDDNai
 --              f <- withEnv @s (notL v) $ step ls e'
 --              pure $ iff v t f
 
---     allFlatAnds :: IsLit s => [DD s] -> MaybeT (State s) (s, [DD s])
+--     allFlatAnds :: IsLit v s => [DD v s] -> MaybeT (State s) (s, [DD v s])
 --     allFlatAnds ls = do
 --         env <- get
 --         (Just o,s) <- pure (runState (runMaybeT $ traverse flatAnds ls) pempty)
@@ -502,7 +494,7 @@ doesTerminate = fmap isJust . timeout 12000 . (\x -> x `seq` pure ()) . toBDDNai
 --         put env'
 --         pure $ (env ==> s, concat o)
 
---     flatAnds :: IsLit s => DD s -> MaybeT (State s) [DD s]
+--     flatAnds :: IsLit v s => DD v s -> MaybeT (State s) [DD v s]
 --     flatAnds (And s ls) = do
 --        tellEnv s
 --        lls <- traverse flatAnds $ S.toList ls

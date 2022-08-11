@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedRecordDot #-}
+-- | helper to print grids such as sudou boards
 module Data.GridPrint where
 
 

@@ -8,9 +8,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TemplateHaskell #-}
+-- | Range abstract domain
+-- (1...3) + (1...2) = (2....5)
 module Range where
 import Control.Monad.State ()
-import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), contains, BoundedLattice(..), top, PContains (compareC), LatticeVal (..), getLatticeVal)
+import Debug.Trace
+import Types (PSemigroup(..), POrd (..), PLattice ((<||>)), PMonoid (pempty), RegularSemigroup (..), contains, BoundedLattice(..), top, PContains (containment), LatticeVal (..), getLatticeVal)
 import Control.Applicative ( Applicative(liftA2) )
 import Test.QuickCheck (Testable (property))
 import Data.Maybe (isNothing, isJust)
@@ -76,6 +79,9 @@ prop_abs = checkAbstraction1 abs
 checkAbstraction :: (Range Int -> Range Int -> Range Int) -> Property
 checkAbstraction f = property $ \x y -> f (fromTuple x) (fromTuple y) == bruteForce f (fromTuple x) (fromTuple y)
 
+checkAbstractionSound :: (Range Int -> Range Int -> Range Int) -> Property
+checkAbstractionSound f = property $ \x y -> contains (bruteForce f (fromTuple x) (fromTuple y)) (f (fromTuple x) (fromTuple y))
+
 checkAbstraction1 :: (Range Int -> Range Int) -> Property
 checkAbstraction1 f = property $ \x -> f (fromTuple x) == bruteForce f (fromTuple x)
 
@@ -99,14 +105,14 @@ instance (Ord a, Num a) => POrd (Range a) where
       = Just GT
     compareP _ _ = Nothing
 instance (Ord a, Num a) => PContains (Range a) where
-    compareC l r
+    containment l r
       | nL && nR = Just EQ
       | nL = Just LT
       | nR = Just GT
       where
         nL = isBot l
         nR = isBot r
-    compareC (Range a b) (Range a' b') = (flipOrd $ compareL a a') `with` compareR b b'
+    containment (Range a b) (Range a' b') = (flipOrd $ compareL a a') `with` compareR b b'
       where
         flipOrd LT = GT
         flipOrd GT = LT
@@ -308,6 +314,121 @@ appMod (Finite _) (Finite 0) = Nothing
 appMod (Finite a) (Finite b) = Just $ Finite $ a `mod` b
 
 
+
+left (Range a (Just b)) 
+  | b < 0 = Range a (Just b)
+left (Range a _)  = Range a (Just $ -1)
+
+right (Range (Just a) b) 
+  | a > 0 = Range (Just a) b
+right (Range _ b)  = Range (Just 1) b
+
+zright (Range (Just a) b) 
+  | a > 0 = Range (Just a) b
+zright (Range _ b) = Range (Just 0) b 
+
+mod1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
+mod1 l m
+  | m < 0 = - (mod1 l (-m))
+mod1 l@(Range (Just a) (Just b)) m
+  | a > b || m == 0 = bot
+  | b < 0 = - mod1 (-l) m
+  | a < 0 = mod1 (a... -1) m ||| mod1 (0...b) m
+  | b - a < abs m && a `mod` m <= b `mod` m = (a `mod` m) ... (b `mod` m)
+mod1 _ m = 0...(abs m - 1)
+
+
+-- full modulo divison in python:
+--
+-- def mod2([a,b], [m,n]):
+--     // (1): empty interval
+--     if a > b || m > n:
+--         return []
+--     // (2): compute modulo with positive interval and negate
+--     else if b < 0:
+--         return -mod2([-b,-a], [m,n])
+--     // (3): split into negative and non-negative interval, compute, and join 
+--     else if a < 0:
+--         return mod2([a,-1], [m,n]) u mod2([0,b], [m,n])
+--     // (4): use the simpler function from before
+--     else if m == n:
+--         return mod1([a,b], m)
+--     // (5): use only non-negative m and n
+--     else if n <= 0:
+--         return mod2([a,b], [-n,-m])
+--     // (6): similar to (5), make modulus non-negative
+--     else if m <= 0:
+--         return mod2([a,b], [1, max(-m,n)])
+--     // (7): compare to (4) in mod1, check b-a < |modulus|
+--     else if b-a >= n:
+--         return [0,n-1]
+--     // (8): similar to (7), split interval, compute, and join
+--     else if b-a >= m:
+--         return [0, b-a-1] u mod2([a,b], [b-a+1,n])
+--     // (9): modulo has no effect
+--     else if m > b:
+--         return [a,b]
+--     // (10): there is some overlapping of [a,b] and [n,m]
+--     else if n > b:
+--         return [0,b]
+--     // (11): either compute all possibilities and join, or be imprecise
+--     else:
+--         return [0,n-1] // imprecise
+
+-- haskell version:
+mod2 :: (Show a, Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+mod2 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
+  | a > b || m > n = bot
+  | m <= 0  = (-(mod2 l (-(left r)))) ||| mod2 l (right r)
+  | a < 0 = (- (mod2 (- left l) r)) ||| mod2 (zright l) r
+  | m == n = mod1 l m
+  | b-a >= n = 0...(n-1)
+  | b-a >= m = 0...(b-a-1) ||| mod2 (a...b) ((b-a+1)...n)
+  | m > b = l
+  | n > b = 0...b
+  | a == b && even a && n <= 2 = 0...0
+mod2 _ (Range _ (Just n)) = 0...(n-1)
+mod2 _ (Range _ Nothing) = Range (Just 0) Nothing
+
+mod3 :: (Show a, Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+mod3 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
+  | isBot l || isBot r = bot
+  | otherwise = ((mod4 (-left l) (-(left r)))) ||| (-mod4 (-left l) (right r))  ||| (-(mod4 (zright l) (-left r))) ||| (mod4 (zright l) (zright r))
+mod3 _ (Range _ (Just n)) = 0...(n-1)
+mod3 _ (Range _ Nothing) = Range (Just 0) Nothing
+
+testEq :: (Int,Int) -> (Int,Int) -> Bool
+testEq a b = mod3 l r == mod2 l r
+  where
+    l = fromTuple a
+    r = fromTuple b
+mod4 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
+  | a < 0 = (- (mod3 (- left l) r)) ||| mod3 (zright l) r
+  | m == n = mod1 l m
+  | b-a >= n = 0...(n-1)
+  | b-a >= m = 0...(b-a-1) ||| mod3 (a...b) ((b-a+1)...n)
+  | m > b = l
+  | n > b = 0...b
+  | a == b && even a && n <= 2 = 0...0
+mod4 _ (Range _ (Just n)) = 0...(n-1)
+mod4 _ (Range _ Nothing) = Range (Just 0) Nothing
+  
+
+dMod x y = aMod (zright x) (right y)
+  where
+     aMod a b
+          | isBot a || isBot b  = bot
+     aMod a (Range c d) = aMod1 a c ||| aMod1 a d
+     aMod1 (Range (Just a) (Just b)) Nothing = (0...0)
+     aMod1 (Range (Just a) (Just b)) (Just c)
+      | b-a < abs c && mod a c <= mod b c = (mod a c ... mod b c)
+      | otherwise = Range (Just 0) (Just $  c-1)
+
+quickCheckD = checkAbstraction (\a b -> dMod (abs a) (abs b))
+
+
+
+
 -- works if a >= 0, b >= 0, c > 0
 modPos1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
 modPos1 _ 0 = bot
@@ -438,6 +559,7 @@ mkRange x = Range (Just x) (Just x)
 
 fromTuple :: Ord a => (a, a) -> Range a
 fromTuple (a, b) = sortRange (Just a) (Just b)
+
 
 
 upperBound, lowerBound :: Range r -> Range r

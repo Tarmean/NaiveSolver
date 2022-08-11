@@ -26,6 +26,70 @@ packages:
   original:
     hackage: vector-hashtables-0.1.1.1@sha256:cb4ba4af6b83b6956278bbfe8d0f779a40928728e82977e566c0103fe8d6c867,2725
 - completed:
+    name: Graphalyze
+    version: 0.16.0.0
+    git: https://github.com/kindaro/Graphalyze
+    pantry-tree:
+      size: 1131
+      sha256: 162dfe52f77f2c107a782a52aab2fb381a85fbc26bd4ffe6e1fac8d22ead59c9
+    commit: ba15ee96c45f3d5797817b4f6df1e9a4b87a39bb
+  original:
+    git: https://github.com/kindaro/Graphalyze
+    commit: ba15ee96c45f3d5797817b4f6df1e9a4b87a39bb
+- completed:
+    hackage: bktrees-0.3.1@sha256:696026dd70fd2ee04ed37505d6380325532c6840442cdd7a030f20ad15b5e1be,985
+    pantry-tree:
+      size: 373
+      sha256: 7eb63a1fc125f53b364f8719a5acb2d291426af79049b5d0ea34ac6f1f8be103
+  original:
+    hackage: bktrees-0.3.1@sha256:696026dd70fd2ee04ed37505d6380325532c6840442cdd7a030f20ad15b5e1be,985
+- completed:
+    name: graphviz
+    version: 2999.20.1.0
+    git: https://github.com/ivan-m/graphviz
+    pantry-tree:
+      size: 4467
+      sha256: b2aaeaa3c098ca11c131e7e8d745ed414ee95f3b7d5c13a671bd49a8313325d2
+    commit: 42dbb6312d7edf789d7055079de7b4fa099a4acc
+  original:
+    git: https://github.com/ivan-m/graphviz
+    commit: 42dbb6312d7edf789d7055079de7b4fa099a4acc
+- completed:
+    hackage: citeproc-0.8.0.1@sha256:a6a9c4567c2b0a13d6b551e054538eab01a4156d1b27bf7bc31ccd1071bde9b5,5668
+    pantry-tree:
+      size: 80736
+      sha256: cf1ca98354369fe057dfa1d80435bf3226f3f7a772876808036e21b1731e1393
+  original:
+    hackage: citeproc-0.8.0.1
+- completed:
+    hackage: pandoc-2.18@sha256:853db162b71ffa4fe058fcf056dc52fd8ea75ab3ab508f72380495c45c3e7b67,40002
+    pantry-tree:
+      size: 140394
+      sha256: ae7a49fa275b1d03b5befc5c3a3b6c5d1fce7c63c23733c9c05af0814e263744
+  original:
+    hackage: pandoc-2.18
+- completed:
+    hackage: hslua-aeson-2.2.1@sha256:86be4742cb6620a4c0fd8930b04fdc2f8c0578007018d0594a65111140c3e0ff,3200
+    pantry-tree:
+      size: 334
+      sha256: bf4e75b714b0d25795ea1f7a255e210c431da64dee56f57adac292fb20f4cac7
+  original:
+    hackage: hslua-aeson-2.2.1
+- completed:
+    hackage: hslua-2.2.1@sha256:2d7aa66f0ae533dcea7228b55fa4b64f38e6a2bbc01cd8a52ecec159d4c37a0e,4751
+    pantry-tree:
+      size: 679
+      sha256: 9e4237facd9f4e524dcef48ec64fa4b196c192151222ab634231ed9a75007abb
+  original:
+    hackage: hslua-2.2.1
+- completed:
+    hackage: gridtables-0.0.2.0@sha256:3c6563f97ee7ff2e44e5b6f24a9581d619ac6b62c8e8672ab0380d8b78f16146,2965
+    pantry-tree:
+      size: 546
+      sha256: d45c7fee7f2f5e217b89b246e537a164218e3afb3aa6c1efd51989d94052d1ff
+  original:
+    hackage: gridtables-0.0.2.0@sha256:3c6563f97ee7ff2e44e5b6f24a9581d619ac6b62c8e8672ab0380d8b78f16146,2965
+- completed:
     name: StrictCheck
     version: 0.3.0
     git: https://github.com/Tarmean/StrictCheck
@@ -65,23 +129,23 @@ packages:
     version: 0.1.0
     git: https://github.com/Tarmean/overeasy
     pantry-tree:
-      size: 1614
-      sha256: c1e589dce85d8123efd4ade7905403054070ce38c073cbb3023a5783ffc9c590
-    commit: 0a1932cb1af4674524f78a3bbbe63bfbbe0d5479
+      size: 1676
+      sha256: da1ffcaf18b2e0dbd0b107f059e93dcca759a6829b49b4661718ea78becfaaa1
+    commit: a7be71cb2db5585e9cf66cd5062f82d235195895
   original:
     git: https://github.com/Tarmean/overeasy
-    commit: 0a1932cb1af4674524f78a3bbbe63bfbbe0d5479
+    commit: a7be71cb2db5585e9cf66cd5062f82d235195895
 - completed:
     name: int-like
     version: 0.1.0
     git: git@github.com:Tarmean/int-like.git
     pantry-tree:
       size: 1134
-      sha256: b971e0e6437ab8c9076ff2419b3eb1a84570d7dcbfd08046a82623f4d533f25b
-    commit: 69165b19c01b64957e36cfcb51e09f4ec99b6e89
+      sha256: f8e5372102ff175bc157bbefad8076ecd40ab75db76f2497dc113d51cf7d5a19
+    commit: c636f81c33367d69f6202a0f16553df2b858f412
   original:
     git: git@github.com:Tarmean/int-like.git
-    commit: 69165b19c01b64957e36cfcb51e09f4ec99b6e89
+    commit: c636f81c33367d69f6202a0f16553df2b858f412
 snapshots:
 - completed:
     size: 554661

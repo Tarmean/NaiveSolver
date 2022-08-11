@@ -11,6 +11,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- | First draft for a propagator dsl that moved to egg in rust
 module IncrementalDatalog where
 import Language.KURE as K
 

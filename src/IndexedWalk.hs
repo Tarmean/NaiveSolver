@@ -1,4 +1,5 @@
 module IndexedWalk where
+-- | See IndexADT
 import Prelude hiding ((*>), (>>=))
 import qualified Prelude as P
 

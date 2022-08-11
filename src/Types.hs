@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DefaultSignatures #-}
+-- | Bunch of core types
 module Types where
 import qualified Data.Set as S
 import qualified Data.Map.Merge.Lazy as M
@@ -18,11 +20,11 @@ main :: IO ()
 main = print "bdd"
 
 class PContains s where
-   -- compareC a b == Just LT
+   -- containment a b == Just LT
    -- \forall x \in a. x \in b
-   compareC :: s -> s -> Maybe Ordering
+   containment :: s -> s -> Maybe Ordering
 contains :: PContains a => a -> a -> Bool
-contains a b = case compareC a b of
+contains a b = case containment a b of
    Just LT -> True
    Just EQ -> True
    _ -> False
@@ -36,26 +38,26 @@ class POrd s where
    Just EQ -> True
    _ -> False
 type Var = Int
-data DD s
-  = If Var s (DD s) (DD s)
+data DD v s
+  = If v s (DD v s) (DD v s)
   | IsTrue
   | Iff s
   | IsFalse
   deriving (Eq, Ord, Show)
-class (Eq s, PMonoid s, RegularSemigroup s, PLattice s, Show s) => IsLit s where
+class (Eq s, PMonoid s, RegularSemigroup s, PLattice s, Show s) => IsLit v s | s -> v where
   -- | construct `var=True`
-  isL :: Var -> s
+  isL :: v -> s
   -- | construct `var=False`
-  notL :: Var -> s
+  notL :: v -> s
   -- | largest unknown var
-  maxSplitVar :: s -> Var
+  maxSplitVar :: s -> v
   -- | Conditions on variable, `split x s` return
   --     Just (s|x=True, s|x=False)
   -- if x occurs in s. Afterwards, the results shouldn't refer to x.
   -- This could be implemented via `<?>`, `maxSplitVar`, and `==>` but a more performant implementation might be possible
-  splitLit :: Var -> s -> Maybe (DD s,DD s)
+  splitLit :: v -> s -> Maybe (DD v s,DD v s)
   -- Check if the variable is definitely True/False
-  evalVar :: Var -> s -> Maybe Bool
+  evalVar :: v -> s -> Maybe Bool
 
 -- | Partial meet of data, a AND b is true so union their info
 class PSemigroup s where
@@ -135,7 +137,7 @@ notBot IsTop = Just top
 newtype Val a = Val {unVal :: a}
   deriving (Eq, Ord, Show)
 instance Eq a => PContains (Val a) where
-    compareC a b
+    containment a b
       | a == b = Just EQ
       | otherwise = Nothing
 instance Eq a => POrd (Val a) where
@@ -190,7 +192,7 @@ meetMap l r = toIs $ M.mergeA M.dropMissing M.dropMissing (M.zipWithMaybeAMatche
       toIs Nothing = IsBot
       toIs (Just a) = Is a
 
-instance IsLit (PMap Var (Val Bool)) where
+instance IsLit Var (PMap Var (Val Bool)) where
     isL v = PMap $ M.singleton v (Val True)
     notL v = PMap $ M.singleton v (Val False)
     maxSplitVar (PMap p) = case M.maxViewWithKey p of
@@ -201,24 +203,24 @@ instance IsLit (PMap Var (Val Bool)) where
       | otherwise = Just (removeVar v True env, removeVar v False env)
     evalVar v env = fmap unVal $ env ?? v
 
-removeVar :: IsLit s => Var -> Bool -> s -> DD s
+removeVar :: IsLit Var s => Var -> Bool -> s -> DD Var s
 removeVar v b s = case s <?> isV v b of
     Nothing -> IsFalse
     Just s' -> iffMaybe (isV v b ==>? s')
-iff :: (Eq s, PMonoid s) => s -> DD s
+iff :: (Eq s, PMonoid s) => s -> DD v s
 iff a = if a == top then IsTrue else Iff a
-iffMaybe :: Maybe s -> DD s
+iffMaybe :: Maybe s -> DD v s
 iffMaybe Nothing = IsTrue
 iffMaybe (Just a) = Iff a
 
-isV :: IsLit s => Var -> Bool -> s
+isV :: IsLit Var s => Var -> Bool -> s
 isV v b = if b then isL v else notL v
 
 instance (P.Pretty k, P.Pretty v) => P.Pretty (PMap k v) where
   pretty (PMap m) = P.braces $ P.sep  $ P.punctuate P.comma [ P.pretty "v" P.<> P.pretty k P.<+> P.pretty ":=" P.<+> P.pretty v| (k,v) <- M.toList m]
 instance P.Pretty e => P.Pretty (Val e) where
   pretty (Val e) = P.pretty e
-instance (Eq e, PMonoid e, P.Pretty e) => P.Pretty (DD e) where
+instance (Eq e, PMonoid e, P.Pretty v, P.Pretty e) => P.Pretty (DD v e) where
   pretty a = case a of
     IsTrue -> P.pretty "True"
     IsFalse -> P.pretty "False"

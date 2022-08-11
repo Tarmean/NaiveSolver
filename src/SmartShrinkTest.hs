@@ -8,6 +8,7 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE LambdaCase #-}
+-- | Concrete test calls for shrinker with some messy benchmarks
 module SmartShrinkTest where
 import Data.Data (Data, Typeable)
 import GHC.Generics (Generic)
