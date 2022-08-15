@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DerivingStrategies #-}
 module Data.BitVector where
 
 
@@ -9,7 +10,7 @@ import Data.Bits
 import Data.Hashable
 
 newtype BitArray a = BitArray { unBitArray :: Word16 }
-  deriving (Eq, Ord, Show, Hashable)
+  deriving newtype (Eq, Ord, Show, Hashable)
 
 singleton :: Enum a => a -> BitArray a
 singleton = BitArray . toBits

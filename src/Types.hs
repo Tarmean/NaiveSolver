@@ -44,6 +44,15 @@ data DD v s
   | Iff s
   | IsFalse
   deriving (Eq, Ord, Show)
+
+data DDF v s f
+  = IfF v s f f
+  | IsTrueF
+  | IffF s
+  | IsFalseF
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+
 class (Eq s, PMonoid s, RegularSemigroup s, PLattice s, Show s) => IsLit v s | s -> v where
   -- | construct `var=True`
   isL :: v -> s

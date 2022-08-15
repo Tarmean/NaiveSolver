@@ -25,6 +25,7 @@ source-repository head
 
 library
   exposed-modules:
+      BFSChoiceTree
       ClusterEGraph
       Data.Bag
       Data.BitVector
@@ -85,9 +86,7 @@ library
       Paths_NaiveSolver
   hs-source-dirs:
       src
-  default-extensions:
-      GHC2021
-  ghc-options: -Wall -Wunused-dependencies -O2
+  ghc-options: -Wall -Wunused-dependencies -O2 -XGHC2021
   build-depends:
       PyF
     , QuickCheck
@@ -136,9 +135,7 @@ executable NaiveSolver-exe
       Paths_NaiveSolver
   hs-source-dirs:
       app
-  default-extensions:
-      GHC2021
-  ghc-options: -Wall -Wunused-dependencies -O2 -O2 -threaded -rtsopts -with-rtsopts=-N -Wall
+  ghc-options: -Wall -Wunused-dependencies -O2 -XGHC2021 -O2 -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:
       NaiveSolver
     , PyF
@@ -189,9 +186,7 @@ test-suite NaiveSolver-test
       Paths_NaiveSolver
   hs-source-dirs:
       test
-  default-extensions:
-      GHC2021
-  ghc-options: -Wall -Wunused-dependencies -O2 -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wunused-dependencies -O2 -XGHC2021 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       NaiveSolver
     , PyF

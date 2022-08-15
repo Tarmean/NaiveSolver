@@ -18,8 +18,7 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 allow-newer: true
-resolver:
-  url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2022/4/28.yaml
+resolver: nightly-2022-08-04
 # User packages to be built.
 # Various formats can be used as shown in the example below.
 #
@@ -39,16 +38,16 @@ extra-deps:
 - kure-2.18.6@sha256:180de0a401e901727bfadd12ed6f7295921551c3d2017421c245caa3f12f1ead,2797
 - dlist-0.8.0.8@sha256:90ca348bffdc62d7070bcf0e97c728f8d01b24fbc7ea08d2909157d0da76534c,2066
 - vector-hashtables-0.1.1.1@sha256:cb4ba4af6b83b6956278bbfe8d0f779a40928728e82977e566c0103fe8d6c867,2725
-- git: https://github.com/kindaro/Graphalyze
-  commit: ba15ee96c45f3d5797817b4f6df1e9a4b87a39bb
-- bktrees-0.3.1@sha256:696026dd70fd2ee04ed37505d6380325532c6840442cdd7a030f20ad15b5e1be,985
-- git: https://github.com/ivan-m/graphviz
-  commit: 42dbb6312d7edf789d7055079de7b4fa099a4acc
-- citeproc-0.8.0.1
-- pandoc-2.18
-- hslua-aeson-2.2.1
-- hslua-2.2.1
-- gridtables-0.0.2.0@sha256:3c6563f97ee7ff2e44e5b6f24a9581d619ac6b62c8e8672ab0380d8b78f16146,2965
+# - git: https://github.com/kindaro/Graphalyze
+#   commit: ba15ee96c45f3d5797817b4f6df1e9a4b87a39bb
+# - bktrees-0.3.1@sha256:696026dd70fd2ee04ed37505d6380325532c6840442cdd7a030f20ad15b5e1be,985
+# - git: https://github.com/ivan-m/graphviz
+#   commit: 42dbb6312d7edf789d7055079de7b4fa099a4acc
+# - citeproc-0.8.0.1
+# - pandoc-2.18
+# - hslua-aeson-2.2.1
+# - hslua-2.2.1
+# - gridtables-0.0.2.0@sha256:3c6563f97ee7ff2e44e5b6f24a9581d619ac6b62c8e8672ab0380d8b78f16146,2965
 - git: https://github.com/Tarmean/StrictCheck
   commit: 5f2cacbc754edc9f803a66896856c33289849e7f
 - git: https://github.com/Tarmean/quickspec
@@ -58,9 +57,9 @@ extra-deps:
   subdirs:
     - src
 - git: https://github.com/Tarmean/overeasy
-  commit: a7be71cb2db5585e9cf66cd5062f82d235195895
+  commit: 5eef4418e3b2e8c643e9afd268bd9e4d6bf7fbcf
 - git: git@github.com:Tarmean/int-like.git
-  commit: c636f81c33367d69f6202a0f16553df2b858f412
+  commit: 5403d1d699b1ecb09c0362a3fd0ec152fb247e07
   # - acme-missiles-0.3
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a

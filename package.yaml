@@ -70,9 +70,28 @@ dependencies:
 library:
   source-dirs: src
 ghc-options:
-    - -Wall -Wunused-dependencies
-    - -O2
-default-extensions: GHC2021
+    -Wall -Wunused-dependencies
+    -O2
+    -XGHC2021
+    # -Wcompat
+    # -Widentities
+    # -Wincomplete-uni-patterns
+    # -Wincomplete-record-patterns
+    # -Wincomplete-redundant-constraints
+    # -Wnoncanonical-monad-instances
+    # -Wpartial-fields
+    # -Wmissing-deriving-strategies
+    # -fhide-source-paths
+    # -fwrite-ide-info
+    # -hiedir=.hie
+    # -Wunused-packages
+    # -Winvalid-haddock
+    # -Wunicode-bidirectional-format-characters
+    # -Werror=unicode-bidirectional-format-characters
+    # -Wredundant-bang-patterns
+    # -Woperator-whitespace
+    # -Wimplicit-lift
+default-language: GHC2021
 
 executables:
   NaiveSolver-exe:

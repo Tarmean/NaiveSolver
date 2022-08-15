@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE LambdaCase #-}
 -- | Decision trees labeled by lattices
 -- Propagates information that holds accross branches upwards
 module DecisionDiagram where
@@ -12,13 +13,14 @@ import System.Timeout (timeout)
 import Debug.Trace (trace)
 import qualified Data.Set as S
 
-import Control.Monad.State ( MonadState(get, put), State )
+import Control.Monad.State ( MonadState(get, put), State , gets, modify, execState)
 import Data.List (partition)
 import Data.Either (partitionEithers)
 import Data.Maybe (isJust)
 import Control.Monad.Trans.Maybe ( MaybeT(..) )
 import qualified Prettyprinter as P
 import Data.Utils (docToString)
+import qualified Data.Foldable as F
 
 
 bddTestEnv :: (Bool, Bool, Bool, Bool)
@@ -26,7 +28,26 @@ bddTestEnv = (False,True,False,False)
 bddTest :: BExpr
 bddTest = BOr (BAnd (BOr (BAnd (BLit B2) (BOr (BAnd (BOr (BLit B4) (BLit B3)) (BNot (BLit B4))) (BOr (BAnd (BLit B4) (BLit B2)) (BNot (BLit B1))))) (BLit B1)) (BAnd (BAnd ( BAnd (BOr (BOr (BLit B3) (BLit B4)) (BLit B2)) (BNot (BAnd (BLit B3) (BLit B1)))) (BOr (BLit B1) (BAnd (BOr (BLit B2) (BLit B4)) (BNot (BLit B1))))) (BLit B1))) ( BLit B1)
 
+toDDF :: DD v s -> DDF v s (DD v s)
+toDDF IsTrue = IsTrueF
+toDDF IsFalse = IsFalseF
+toDDF (Iff v) = IffF v
+toDDF (If v s l r) = IfF v s l r
 
+countCard :: (Ord v, Ord s) => DD v s -> M.Map Int Int
+countCard bdd = M.fromListWith (+) [(card, 1) | card <- M.elems occs]
+  where
+    terms = execState (hashCons bdd) mempty
+    occs = M.fromListWith (+) [(ref, 1) | term <- M.keys terms, ref <- F.toList term]
+hashCons :: (Ord s, Ord v) => DD v s -> State (M.Map (DDF v s Int) Int) Int
+hashCons x = do
+   xi <- traverse hashCons (toDDF x)
+   gets (M.!? xi) >>= \case
+       Just o -> pure o
+       Nothing -> do
+            i <- gets (M.size)
+            modify (M.insert xi i)
+            pure i
 
 
 type BDD = DD Var (PMap Var (Val Bool))

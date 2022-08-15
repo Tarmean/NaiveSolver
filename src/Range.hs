@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE PatternSynonyms, ViewPatterns #-}
 {-# LANGUAGE NegativeLiterals #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -21,13 +22,21 @@ import Test.QuickCheck.All (quickCheckAll)
 import Test.QuickCheck.Property (Property)
 import qualified Prettyprinter as P
 
-instance P.Pretty e => P.Pretty (Range e) where
-  pretty (Range l r) = P.pretty l P.<> P.pretty "..." P.<> P.pretty r
+instance (Num e, Ord e, P.Pretty e) => P.Pretty (Range e) where
+  pretty (LConst l) = P.pretty l
+  pretty l 
+    | isBot l = P.pretty "range:!"
+  pretty (Range l r) = (P.pretty l P.<> P.pretty "..." P.<> P.pretty r)
+
+pattern LConst :: (Num e, Ord e) => e -> Range e
+pattern LConst l <- (toPoint -> Just l)
+  where LConst l = l...l
 
 ft :: (Maybe Int, Maybe Int) -> Range Int
 ft (a,b)
   | isBot (Range a b) = bot
   | otherwise = Range a b
+
 
 -- implication laws for heyting algebra
 prop_impl_conj_r, prop_impl_conj_l, prop_impl_refl , prop_impl_full  , prop_impl_empty :: Property
@@ -241,9 +250,9 @@ instance (Integral a, Eq a) => Enum (Range a) where
   toEnum i = Range (Just $ fromIntegral i) (Just $ fromIntegral i)
   fromEnum (Range (Just i) (Just j)) | i == j = fromIntegral i
   fromEnum _ = undefined
-instance (Ord a, Bounded a, Integral a) => Integral (Range a) where
+instance (Ord a, Integral a) => Integral (Range a) where
   div = divI
-  divMod = undefined
+  mod = mod3
   toInteger = undefined
   quotRem = undefined
 
@@ -376,32 +385,19 @@ mod1 _ m = 0...(abs m - 1)
 --         return [0,n-1] // imprecise
 
 -- haskell version:
-mod2 :: (Show a, Integral a, Ord a, Num a) => Range a -> Range a -> Range a
-mod2 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
-  | a > b || m > n = bot
-  | m <= 0  = (-(mod2 l (-(left r)))) ||| mod2 l (right r)
-  | a < 0 = (- (mod2 (- left l) r)) ||| mod2 (zright l) r
-  | m == n = mod1 l m
-  | b-a >= n = 0...(n-1)
-  | b-a >= m = 0...(b-a-1) ||| mod2 (a...b) ((b-a+1)...n)
-  | m > b = l
-  | n > b = 0...b
-  | a == b && even a && n <= 2 = 0...0
-mod2 _ (Range _ (Just n)) = 0...(n-1)
-mod2 _ (Range _ Nothing) = Range (Just 0) Nothing
 
-mod3 :: (Show a, Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+mod3 :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
 mod3 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
   | isBot l || isBot r = bot
   | otherwise = ((mod4 (-left l) (-(left r)))) ||| (-mod4 (-left l) (right r))  ||| (-(mod4 (zright l) (-left r))) ||| (mod4 (zright l) (zright r))
 mod3 _ (Range _ (Just n)) = 0...(n-1)
 mod3 _ (Range _ Nothing) = Range (Just 0) Nothing
 
-testEq :: (Int,Int) -> (Int,Int) -> Bool
-testEq a b = mod3 l r == mod2 l r
-  where
-    l = fromTuple a
-    r = fromTuple b
+-- testEq :: (Int,Int) -> (Int,Int) -> Bool
+-- testEq a b = mod3 l r == mod2 l r
+--   where
+--     l = fromTuple a
+--     r = fromTuple b
 mod4 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
   | a < 0 = (- (mod3 (- left l) r)) ||| mod3 (zright l) r
   | m == n = mod1 l m
