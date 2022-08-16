@@ -2,16 +2,9 @@ module Lib
     ( someFunc
     ) where
 
-import qualified Text.Pretty.Simple as P
 import EPropTest
 import BFSChoiceTree
-import SmartShrinkTest (prettyWithKey, propLam, getValueFromInterleaved, shrinkTest2)
-import Data.Maybe
-import SmartShrink (traceForest)
 import Data.Utils
-import DecisionDiagram (countCard)
-import qualified Data.Map as M
-import Overeasy.EGraph (EClassId(..))
 
 someFunc :: IO ()
 someFunc = pprint $ fmap (fmap extractVars) (BFSChoiceTree.mkTree 10 gamePlan aocRiddle)

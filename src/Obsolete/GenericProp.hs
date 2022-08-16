@@ -20,7 +20,7 @@ import qualified Data.Set as S
 import Control.Monad.State
 import Control.Monad.Except
 import Data.Foldable (asum)
-import qualified DecisionDiagram as D
+import qualified Obsolete.DecisionDiagram as D
 
 
 class ShouldProp (a :: Type) (b :: Type) where

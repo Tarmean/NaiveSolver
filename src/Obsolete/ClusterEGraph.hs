@@ -5,7 +5,7 @@
 -- Theoretically useful to find mostly independent
 -- sub-problems, but the dependency footprint is so large
 -- that it is a 10* increase in compile time
-module ClusterEGraph where
+module Obsolete.ClusterEGraph where
 -- import Overeasy.EGraph
 -- import Overeasy.Assoc
 

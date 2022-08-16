@@ -57,7 +57,7 @@ extra-deps:
   subdirs:
     - src
 - git: https://github.com/Tarmean/overeasy
-  commit: 5eef4418e3b2e8c643e9afd268bd9e4d6bf7fbcf
+  commit: 28dffd144ab1bed2eb3aa68e6bc17f18fbffc9bd
 - git: git@github.com:Tarmean/int-like.git
   commit: 5403d1d699b1ecb09c0362a3fd0ec152fb247e07
   # - acme-missiles-0.3

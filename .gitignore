@@ -2,3 +2,4 @@
 *.jar
 *~
 .hie/*
+dbgdump.txt

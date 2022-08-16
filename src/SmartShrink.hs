@@ -28,8 +28,6 @@ module SmartShrink where
 import Twee.Pretty
 import PyF
 
--- import Data.Express
--- import Data.Express.Utils.Typeable (tyArity)
 import Control.Monad.State 
 import Control.Monad.Cont
 import Control.Applicative (Alternative (..), Applicative (..))
@@ -49,18 +47,8 @@ import qualified Type.Reflection as TR
 import Type.Reflection (SomeTypeRep)
 import Control.Monad.Identity
 import GHC.TypeLits (type (+), Nat, type (-), KnownNat, natVal, natVal')
-import qualified IndexedWalk as Ix
 import GHC.IO (unsafePerformIO)
 import Data.IORef
-import qualified Twee.Base as TB
-import qualified Twee.Term as T
-import qualified Data.Label as T
--- import Data.Express.Utils (sortOn)
--- import Test.Extrapolate
--- import Test.Extrapolate.Core (grounds)
--- import qualified Test.Speculate.Expr as SE
--- import Test.Speculate.Engine (theoryAndRepresentativesFromAtoms)
--- import GHC.Base (TyCon(..))
 import qualified Data.List as L
 import QuickSpec.Internal.Term
 import qualified QuickSpec.Internal.Type as QT
@@ -873,10 +861,6 @@ groupedView v k m = do
 --         mapNeighborhood $ (\_ -> Left v)
 --         checkpoint
 
-notFunctionType :: Typed a => a -> Bool
-notFunctionType v = case typ v of
-    (T.App (T.F _ QT.Arrow) _) -> False
-    _ -> True
 
 modCursor :: MonadZipper o m => (o -> o) -> m ()
 modCursor p = do

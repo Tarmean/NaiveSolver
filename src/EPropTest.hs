@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-name-shadowing #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -13,41 +13,32 @@
 -- | I had to fork the Overeasy EGraph library to make propagation work
 -- this module sits between chairs because it references internals from both.
 module EPropTest where
-import ClusterEGraph
 
 import GHC.Stack
-import BFSChoiceTree (mkTree, AppDiffs(..))
 
 import Control.Arrow (second)
-import Data.Functor.Identity
 import Data.BitVector as BV
--- import DecisionDiagram
-import GenericProp
-import Debug.Trace (traceM)
-import Control.Monad (forM_, when, void)
-import Control.Applicative (Alternative(..), liftA2, asum)
-import Debug.Trace (trace)
+import Control.Applicative (Alternative(..), asum)
 import Control.Monad.State hiding (StateT, modify', execStateT, runStateT, evalStateT)
 
 import Data.List (transpose, sortBy, sortOn)
 import Data.Ord (comparing)
-import Control.Monad.Trans.State.Strict (modify', StateT, execStateT, runStateT, evalStateT)
+import Control.Monad.Trans.State.Strict (StateT, execStateT, runStateT, evalStateT)
 import Range
 import FiniteDomains
 import Types
-import Data.Utils (pprint, pshow, zipFoldableWith)
+import Data.Utils (pprint, pshow)
 import GHC.Generics ((:+:)(..))
 import Data.Functor.Foldable
 import qualified Data.Foldable as F
 import Data.Fix (Fix(..))
 import qualified Data.Set as S
-import Data.Maybe (mapMaybe, fromMaybe, fromJust, isNothing, catMaybes)
+import Data.Maybe (mapMaybe, fromJust, catMaybes)
 
 import Data.Void (Void, absurd)
 import qualified Data.Map as M
 
 import Control.DeepSeq (NFData)
-import Data.Functor.Foldable.TH (makeBaseFunctor)
 import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Prettyprinter
@@ -60,7 +51,6 @@ import Overeasy.EquivFind
 
 import qualified IntLike.Map as ILM
 import qualified IntLike.Set as ILS
-import GHC.IO (unsafePerformIO)
 
 data Arith =
     ArithPlus Arith Arith
@@ -128,31 +118,31 @@ mkPlus a b = do
     (_, c) <- egAddFlatTerm (inject $ ArithPlusF a b)
     (_, cma) <- egAddFlatTerm (inject $ ArithMinusF c a)
     (_, cmb) <- egAddFlatTerm (inject $ ArithMinusF c b)
-    egMerge cma b
-    egMerge cmb a
+    _ <- egMerge cma b
+    _ <- egMerge cmb a
     pure c
 mkDiv :: EClassId -> EClassId -> StateT Eg3 Maybe EClassId
 mkDiv a b = do
     (_, c) <- egAddFlatTerm (inject $ ArithDivF a b)
     (_, a') <- egAddFlatTerm (inject $ ArithInvDivF c b a)
-    egMerge a a'
+    _ <- egMerge a a'
     pure c
 divTest :: Maybe Eg3
 divTest  = flip execStateT egNew $ do
     l1 <- snd <$> egAddFlatTerm (inject $ Var 1)
     l2 <- snd <$> egAddFlatTerm (inject $ Var 2)
-    egAddAnalysis l1 [injectAna (5...(10::Integer))]
-    egAddAnalysis l2 [injectAna (1...(2::Integer))]
-    mkDiv l1 l2
+    _ <- egAddAnalysis l1 [injectAna (5...(10::Integer))]
+    _ <- egAddAnalysis l2 [injectAna (1...(2::Integer))]
+    _ <- mkDiv l1 l2
     egRebuild'
     pure ()
 timesTest :: Maybe Eg3
 timesTest  = flip execStateT egNew $ do
     l1 <- snd <$> egAddFlatTerm (inject $ Var 1)
     l2 <- snd <$> egAddFlatTerm (inject $ Var 2)
-    egAddAnalysis l1 [injectAna (5...(10::Integer))]
-    egAddAnalysis l2 [injectAna (0...(2::Integer))]
-    mkTimes l1 l2
+    _ <- egAddAnalysis l1 [injectAna (5...(10::Integer))]
+    _ <- egAddAnalysis l2 [injectAna (0...(2::Integer))]
+    _ <- mkTimes l1 l2
     egRebuild'
     pure ()
 mkTimes :: EClassId -> EClassId -> StateT Eg3 Maybe EClassId
@@ -160,8 +150,8 @@ mkTimes a b = do
     (_, c) <- egAddFlatTerm (inject $ ArithTimesF a b)
     (_, cma) <- egAddFlatTerm (inject $ ArithTryDivF c a)
     (_, cmb) <- egAddFlatTerm (inject $ ArithTryDivF c b)
-    egMerge cma b
-    egMerge cmb a
+    _ <- egMerge cma b
+    _ <- egMerge cmb a
     pure c
 testStep :: Integer -> Integer -> Integer -> EClassId -> EClassId -> StateT Eg3 Maybe EClassId
 testStep an bn cn constw z = do
@@ -201,27 +191,17 @@ newVars i = do
     let
       var1 i = do
         o <- fmap snd $ egAddFlatTerm (inject $ Var i)
-        egAddAnalysis o [injectAna (1...(9::Integer))]
+        _ <- egAddAnalysis o [injectAna (1...(9::Integer))]
         pure o
     os <- (traverse var1 [1..i])
     -- _ <- egRebuild'
     -- egCompact
     pure os
 
-instance AppDiffs Eg3 where 
-    appDiffs base [] = Just base
-    appDiffs base children -- | length children == 1 = trace (pshow (base, zip (diff base <$> children) children, out))  out
-                           | otherwise = out
-      where
-          out = rebuildInPlace =<< applyDiff (foldr1 m1 [diff base child | child <- children]) forwardBase
-          forwardBase = base { egEpoch = maximum (egEpoch base :fmap egEpoch children) }
-          m1 a b= case a <||> b of
-             IsTop -> pempty
-             Is a -> a
-             IsBot -> error "illegal"
 lastAnaChanges :: EGraph d f -> ILM.IntLikeMap EClassId Epoch
 lastAnaChanges g = ILM.fromListWith  max [(v, k) | (k, v) <- ILM.toList (egAnaTimestamps g)]
 
+constants :: [(Integer, Integer, Integer)]
 constants =
     [(12,1,7), (13,1,8), (13,1,10), (-2,26,4), (-10,26,4), (13,1,6),
      (-14,26,11), (-5,26,13), (15,1,1), (15,1,8), (-14,26,4), (10,1,13),
@@ -232,6 +212,7 @@ constants =
 inp :: [Range Integer]
 inp = []
 -- inp = [7, 9, 1, 9, 7, 9, 1, 9, 9, 9, 3, 9, 8, 5]
+mkAocStep :: Integral a => a -> ((a, a, a), a) -> a
 mkAocStep  acc ((a, b, c), digit)
   | mod acc 26 + a == digit = div acc b
   | otherwise = 26 * (div acc  b) + c + digit
@@ -239,6 +220,8 @@ mkAocStep  acc ((a, b, c), digit)
 --   where
 
 
+egResolveUnsafe :: MonadState (EGraph d f) m =>
+                         EClassId -> m EClassId
 egResolveUnsafe s = do
     ef <- gets egEquivFind
     pure (efFindRootAll s ef)
@@ -249,53 +232,53 @@ mkInput = do
       go ((idx, (a,b,c)):xs) (var:vars) z = do
           o <- testStep a b c var z
           ov <- snd <$> egAddFlatTerm (inject (Var (100+idx)))
-          egMerge o ov
+          _ <- egMerge o ov
           go xs vars o
       go [] [] z = pure z
+      go _ _  _ = error "illegal"
     z0 <- fmap snd $ egAddFlatTerm (inject $ ArithConstF 0)
     o <- go (zip [0..] constants) vars z0
     o <- egResolveUnsafe o
-    egMerge z0 o
+    _ <- egMerge z0 o
     -- egMerge o z0
     -- egAddAnalysis o [injectAna (0...(9 :: Integer))]
     egRebuild'
     pure (o, vars)
 diffFor :: [Range Integer] -> EDiff EP
-diffFor inp = diff eg1 eg2
+diffFor inp = diff eg1 egr
   where
-    Just ((o, vars), eg1) = runStateT mkInput egNew
-    Just (_, eg2) = flip runStateT eg1 $ do
+    ((_o, vars), eg1) = fromJust $ runStateT mkInput egNew
+    (_, egr) = fromJust $ flip runStateT eg1 $ do
        forM_ (zip inp vars) $ \(r, x) -> egAddAnalysis x [injectAna r]
        egRebuild'
+aocRiddle :: Eg3
 aocRiddle = fromJust $ execStateT (search1[]) egNew
 
+gamePlan :: [(EClassId, Eg3 -> [(Int, Int, Eg3)])]
 gamePlan = [(EClassId cls, stepFor (EClassId cls))|  cls <- [0..13]]
 stepFor :: EClassId -> Eg3 -> [(Int, Int, Eg3)]
 stepFor ec eg = map fixer $ flip runStateT eg $ do
     i <- asum (map pure [1..9])
     ec <- egResolveUnsafe ec
-    egAddAnalysis ec [injectAna (i...(i::Integer))]
+    _ <- egAddAnalysis ec [injectAna (i...(i::Integer))]
     egRebuild'
     pure i
   where 
     fixer :: (Integer, s) -> (Int, Int, s)
-    fixer (a,b) = (fromIntegral a, (14 - idx)^10 * (fromIntegral a),b)
+    fixer (a,b) = (fromIntegral a, (14 - idx)^(10::Int) * (fromIntegral a),b)
     EClassId idx = ec
 search1 :: [Range Integer] -> StateT Eg3 Maybe ()
-search1 inp = do
+search1 sinp = do
    (_, (ls)) <- mkInput
    egRebuild'
-   forM_ (zip inp ls) $ \(r, x) -> egAddAnalysis x [injectAna r]
+   forM_ (zip sinp ls) $ \(r, x) -> egAddAnalysis x [injectAna r]
    egRebuild'
 
 
-theTester = pprint $ flip execStateT egNew $ do
-   [d8] <- newVars 1
-   (testStep 12 1 7 d8 undefined)
 testEg7 :: Eg3
 testEg7 = fromJust $ flip execStateT egNew $ do
-    (_,c13) <- egAddTerm (genFix $ ArithConst 3)
-    (_,c1pc2) <- egAddTerm (genFix $ ArithMod (ArithConst 7) (ArithConst 3))
+    (_,_c13) <- egAddTerm (genFix $ ArithConst 3)
+    (_,_c1pc2) <- egAddTerm (genFix $ ArithMod (ArithConst 7) (ArithConst 3))
     -- (_,o1) <- egAddFlatTerm (inject $ EqB c13 c1pc2)
     -- (_, o) <- egAddFlatTerm (inject $ IfB o1 c13 c1pc2)
     egRebuild'
@@ -331,7 +314,7 @@ instance Eq a => Lattice (Maybe a) where
     lunion = (<?>)
     lintersect a b = case (<||>) a  b of
         IsTop -> Nothing
-        Is a -> Just a
+        Is x -> Just x
         IsBot -> error "union on bot"
     ltop = Nothing
 
@@ -345,7 +328,9 @@ instance Eq a => DiffApply (Maybe a) (Maybe a) where
     applyDiff = (<?>)
 instance DiffApply EP EP where
     applyDiff (EP l) (EP r) = fmap EP (applyDiff l r)
+toTup :: EP -> (Range Integer, Maybe Bool)
 toTup (EP a) = a
+fromTup :: (Range Integer, Maybe Bool) -> EP
 fromTup (a) = EP a
 instance EAnalysis (Maybe Bool) BoolF where
     eaMake TrueF = Just True
@@ -422,8 +407,7 @@ instance  EAnalysis EP IfF where
                       -- eaRefineAnalysis a (injectAna (Just True))
                       -- traceM "doR"
                       eaMerge cls b
-                  Just l2 -> pure ()
-                
+                  Just _ -> pure ()
 type Eg3 = EGraph EP (ArithF :+: BoolF :+: IfF :+: VarF)
 
 instance EAnalysisMerge (Maybe Bool) where
@@ -434,70 +418,8 @@ instance EAnalysisMerge (Maybe Bool) where
           | otherwise = Nothing
         guardAllSame [] = Nothing
 
-    
--- z preserved between loop, pass 0 to start
--- w is the current digit, this solution tries them in order to find the max solution
--- n is depth.
--- int A[14] = {12, 13, 13, -2, -10, 13, -14, -5, 15, 15, -14, 10, -14, -5};
--- int B[14] = {1, 1, 1, 26, 26, 1, 26, 26, 1, 1, 26, 1, 26, 26};
--- int C[14] = {7, 8, 10, 4, 4, 6, 11, 13, 1, 8, 4, 13, 4, 14};
-
--- long long stage(int n, int w, long long z)
--- n:0, w: 1..9, z:0
--- {
---   if (z % 26 + A[n] == w) {
---     return z / B[n];
---   } else {
---     return 26 * (z / B[n]) + w + C[n];
---   }
--- }
--- void search(int depth, long long z, char solution[15])
--- {
---     if (depth == 14) {
---         if (z == 0) {
---             solution[depth] = '\0';
---             printf("%s\n", solution);
---         }
---         return;
---     }
---     else if (z >= max_z[depth])
---         return;
-
---     for(int i = 1; i <= 9; ++i) {
---         solution[depth] = '0' + i;
---         search(depth + 1, stage(depth, i, z), solution);
---     }
--- }
-
--- int main(int argc, char **argv)
--- {
---     char solution[15];
---     search(0, 0, solution);
--- }
 
 
-instance {-# OVERLAPPABLE #-}(DecideIfEdgeLife f a, DecideIfEdgeLife g a) => DecideIfEdgeLife (f :+: g) a where
-    decideIfEdgeLife d (L1 x) = L1 (decideIfEdgeLife d x)
-    decideIfEdgeLife d (R1 y) = R1 (decideIfEdgeLife d y)
-instance {-# INCOHERENT #-} (Traversable f, DecideIfEdgeLife f a, DecideIfEdgeLife f b) => DecideIfEdgeLife f (a,b) where
-    decideIfEdgeLife d x = zipFoldableWith (||) l r
-      where
-        l = decideIfEdgeLife (fst d) (fmap fst x)
-        r = decideIfEdgeLife (snd d) (fmap snd x)
-instance {-#OVERLAPPING #-} (Pretty s)=> DecideIfEdgeLife (FiniteDomainF s) (FiniteDomain s) where
-    decideIfEdgeLife (FD s) a = o
-      where
-       o 
-         | BV.size s == 1 = False <$ a
-         | otherwise = fmap (\(FD s) -> BV.size s /= 1) a
-instance {-# OVERLAPPABLE #-}Functor a => DecideIfEdgeLife a (FiniteDomain s) where
-    decideIfEdgeLife _ a = False <$ a
-instance {-#OVERLAPPING #-}DecideIfEdgeLife ArithF (Range Integer) where
-    decideIfEdgeLife _ a = fmap (isNothing . toPoint) a
-instance {-# OVERLAPPABLE #-}DecideIfEdgeLife ArithF a where
-    decideIfEdgeLife _ a = False <$ a
-instance {-# OVERLAPPABLE #-}Functor a => DecideIfEdgeLife a (Range Integer) where
-    decideIfEdgeLife _ a = False <$ a
 
 
 
@@ -565,8 +487,6 @@ instance (Pretty d, Pretty (f EClassId)) => Pretty (EGraph d f) where
         prettyClass cid cls = pretty cid  <> brackets (prettyData cls)<> braces (pretty (ILM.partialLookup cid timestamps)) <+> ":=" <> softline <> align (encloseSep "(" ")" ", " [ prettyNode node | node <- ILS.toList (eciNodes cls)])
         prettyNode nid = pretty (assocPartialLookupByKey nid (egNodeAssoc eg))
 
-        mAX_EGRAPH_PRINT = 15
-
         prettyData cls = pretty (eciData cls)
         timestamps = lastAnaChanges eg
 sudokuExample :: M.Map Int Int
@@ -589,6 +509,7 @@ sudokuExample = toIndex [
    toDig c = Just (fromEnum c - fromEnum '0')
    mapMaybe2 f = mapMaybe (traverse f)
 
+printSudoku :: Eg2 -> IO ()
 printSudoku = print . printGrid . toGrid
 toGrid :: Eg2 -> M.Map Var (FiniteDomain SudokuNum)
 toGrid eg0 = M.fromList [ (i-1, egLookupData eg0 (egLookupClass eg0 (inject $ Var i :: TermF EClassId))) | i <- [1..81] ]
@@ -627,7 +548,7 @@ instance  (Pretty a, Num a, Integral a, Bounded a, Enum a, Ord a) => EAnalysis (
         ArithConstF c -> fromIntegral c
         ArithShiftLF a l -> a * 2^l
         ArithShiftRF a l -> a `div` 2^l
-        ArithInvDivF a b _ -> undefined --- (foldr1 (|||) [c + domSingleton i | i <- [fromIntegral a..fromIntegral b]])
+        ArithInvDivF _ _ _ -> undefined --- (foldr1 (|||) [c + domSingleton i | i <- [fromIntegral a..fromIntegral b]])
     eHook _ = pure ()
 instance  EAnalysis (Range Integer) (FiniteDomainF a) where
     eaMake _ = pempty
@@ -773,7 +694,7 @@ instance (Recursive t, Inject (Base t) g) => GeneralizeFix t g where
 
 testEg2, testEg3 :: Eg
 testEg2 = fromJust $ flip execStateT egNew $ do
-    (_,c13) <- egAddTerm (genFix $ ArithConst 3)
+    (_,_c13) <- egAddTerm (genFix $ ArithConst 3)
     (_,_c1pc2) <- egAddTerm (genFix $ ArithPlus (ArithConst 1) (ArithConst 2))
 
     -- egMerge c13 c3
@@ -781,7 +702,7 @@ testEg2 = fromJust $ flip execStateT egNew $ do
 
 testEg3 = fromJust $ flip execStateT testEg2 $ do
     (_,c13) <- egAddTerm (genFix $ ArithConst 1)
-    egAddAnalysis c13 [1...1]
+    _ <- egAddAnalysis c13 [1...1]
 --     (_,c13) <- egAddTerm (ArithInvDivF 1 3)
 --     egAddAnalysis c13 [2...4]
     -- (_,c13) <- egAddTerm (genFix $ ArithConst 3)
@@ -839,8 +760,8 @@ testEg5 = flip execStateT egNew $ do
     v2 <- mkVar 2
     v3 <- mkVar 3
     -- egAddAnalysis v2 [(pempty, FD $ BV.fromList [1,2])]
-    egAddAnalysis v2 [(pempty, FD $ BV.fromList [2])]
-    egAddAnalysis v3 [(pempty, FD $ BV.fromList [3])]
+    _ <- egAddAnalysis v2 [(pempty, FD $ BV.fromList [2])]
+    _ <- egAddAnalysis v3 [(pempty, FD $ BV.fromList [3])]
     _ <- egMerge v2 v3
     _ <- egRebuild'
     egCompact
@@ -894,7 +815,7 @@ instance (Diff o i, Pretty i, Eq i, Inject BoolF f, EAnalysisIntersection o, Sho
        egMerge v t >>= \case
           Nothing -> error "isL var not found failed"
           Just c -> when (c == ChangedYes) (void egRebuild')
-   notL v  = pempty -- fromJust $ flip execStateT egNew $  do
+   notL _  = pempty -- fromJust $ flip execStateT egNew $  do
        -- (_,t) <- egAddFlatTerm (inject FalseF)
        -- egMerge (EClassId v) t >>= \case
        --    Nothing -> error "notL var not found failed"
@@ -904,7 +825,6 @@ instance (Diff o i, Pretty i, Eq i, Inject BoolF f, EAnalysisIntersection o, Sho
      | otherwise = Nothing
      where
       trueNode = egFindNode f e
-      falseNode = egFindNode (inject FalseF) e
       vRoot = case efFindRoot v (egEquivFind e) of
           Nothing -> error "evalVar: var not in egraph"
           Just o -> o
@@ -961,44 +881,26 @@ genSplits :: (Ord (f EClassId), AnaSplits f o) => EGraph o f -> [(EClassId, S.Se
 genSplits eg = sortBy theOrd [ (c, x) | (c, ec) <- ILM.toList (egClassMap eg), (x:_) <- [sortOn S.size $ anaSplits (eciData ec)]]
    where theOrd = comparing (S.size . snd) <> comparing snd
 
--- trySplit :: (EAnalysisIntersection o, Hashable (f EClassId), Traversable f, AnaSplits f o, EAnalysis o f) => EGraph o f -> EGraph o f
+trySplit :: (Ord (f EClassId), AnaSplits f d, EAnalysis d f, Diff d i, Pretty i, Traversable f, Hashable (f EClassId), Eq i) => Int -> EGraph d f -> [EGraph d f]
 trySplit idx eg = (catMaybes [ setVal c s eg  | s <- S.toList ss ])
-      -- [] -> pempty
-      -- x:xs -> foldr orBranch x xs
   where
     (c, ss) = genSplits eg !! idx
-    orBranch a b = case egIntersectGraphs a b of
-      Nothing -> error "oh no"
-      Just a -> a
-      -- IsBot -> error "oh no"
-    setVal c s e = flip execStateT e $ do
-      (_, t) <- egAddFlatTerm s
-      m <- egMerge c t
-      case m of
-        Nothing -> error "setVal: merge failed"
-        Just _ -> egRebuild'
-      pure ()
-
-fixMeee = diff testEg4 (fromJust $ setVal (EClassId 28) (R1 $ L1 $ FDLiteral 7)  testEg4)
-fixMeee2 = diff testEg4 (fromJust $ setVal (EClassId 28) (R1 $ L1 $ FDLiteral 8)  testEg4)
-choicesToDiffs eg0 (h,bs) = [diff eg0 o | b <- S.toList bs, Just o <- [setVal h b eg0]]
 
 
-tryShrink1 eg0 = foldl (\acc cur -> acc >>= flip stepShrink cur) (Just eg0) $ takeWhile ((<4) . S.size . snd) (genSplits eg0)
-  where
-   stepShrink eg1 bs = applyDiff (mergeDiffsN (choicesToDiffs eg1 bs)) eg1
 
-tryShrink2 eg0 = foldl (\acc cur -> acc >>= flip stepShrink cur) (Just eg0) $ pairs $ takeWhile ((<=3) . S.size . snd) (genSplits eg0)
-  where
-   stepShrink eg1 bs = applyDiff (mergeDiffsN (choicesToDiffs2 eg1 bs)) eg1
-   pairs a = liftA2 (,) a a
-   choicesToDiffs2 eg0 ((h1,xs), (h,bs)) = out 
 
-     where out = diff eg0 <$> [ p | x <- S.toList xs, Just o <- [setVal h1 x eg0], b <- S.toList bs, Just p <- [setVal h b eg0]]
 
-mergeDiffsN [] = emptyEDiff
-mergeDiffsN (x:xs) = foldr (\x y -> fromJust (lintersect x y)) x xs
+mergeDiffsN :: Lattice d => [d] -> d
+mergeDiffsN [] = ltop
+mergeDiffsN (l:ls) = foldr (\x y -> fromJust (lintersect x y)) l ls
+
+setVal :: (EAnalysis d f, MonadPlus m, Diff d i, Pretty i, Traversable f, Hashable (f EClassId), Eq i) =>
+                EClassId -> f EClassId -> EGraph d f -> m (EGraph d f)
 setVal c s e = flip execStateT e (setValM c s)
+setValM :: (Pretty i, Diff d i, MonadState (EGraph d f) m,
+                  EAnalysisHook m d f, EAnalysis d f, Traversable f,
+                  Hashable (f EClassId), Eq i) =>
+                 EClassId -> f EClassId -> m ()
 setValM c s =  do
   (_, t) <- egAddFlatTerm s
   m <- egMerge t c
@@ -1008,23 +910,24 @@ setValM c s =  do
   pure ()
 
 instance (Pretty d) => Pretty (EDiff d) where
-    pretty (EDiff (Merges a) (MapDiff b)) = pretty (ILM.toList b) <> pretty (map (second ILS.toList) $ ILM.toList (efFwd a))
+    pretty (EDiff _ (Merges a) (MapDiff b)) = pretty (ILM.toList b) <> pretty (map (second ILS.toList) $ ILM.toList (efFwd a))
 
-tSplits eg0 = take 14 $ (genSplits eg0)
+-- tSplits eg0 = take 14 $ (genSplits eg0)
 
 instance (Lattice d) => PSemigroup (EDiff d) where
     (<?>) = lunion
 instance (Lattice d, Pretty d) => PLattice (EDiff d) where
     (<||>) a b = case lintersect a b of
-        Just a -> Is a
+        Just x -> Is x
         Nothing -> IsTop
 instance (Lattice d, Pretty d) => PMonoid (EDiff d) where
-    pempty = emptyEDiff
+    pempty = ltop
 
 listDom :: [SudokuNum] -> FiniteDomain SudokuNum
 listDom = FD . BV.fromList 
 
-emptyEDiff = EDiff (Merges efNew) (MapDiff mempty)
+
+valOf :: DD v a -> Maybe a
 valOf (If _ v _ _) = Just v
 valOf (Iff s) = Just s
 valOf _ = Nothing
@@ -1032,12 +935,13 @@ valOf _ = Nothing
 
   
 newtype Neg a = Neg a
-  deriving (Eq, Ord, Show, Hashable, Generic)
-instance Lattice a => Lattice (Neg a) where
+  deriving newtype (Eq, Ord, Show, Hashable, Generic)
+instance (Lattice a, BoundedLattice a) => Lattice (Neg a) where
     lunion (Neg a) (Neg b)= fmap Neg (lintersect a b)
     lintersect (Neg a) (Neg b) = fmap Neg (lunion a b)
+    ltop = Neg bot
 instance (BoundedLattice a, PLattice a) => PSemigroup (Neg a) where
-    (<?>) (Neg a) (Neg b) = case (<||>) a b of
+    (<?>) (Neg a0) (Neg b0) = case (<||>) a0 b0 of
         IsTop -> Nothing
         IsBot -> Just (Neg bot)
         Is a -> Just (Neg a)
@@ -1046,7 +950,7 @@ instance BoundedLattice a => PMonoid (Neg a) where
 instance (Enum a, Bounded a, Ord a) => Lattice (FiniteDomain a) where
     lintersect a b = case (<||>) a  b of
         IsTop -> Nothing
-        Is a -> Just a
+        Is x -> Just x
         IsBot -> error "union on bot"
     lunion = (<?>)
     ltop = pempty
@@ -1073,7 +977,7 @@ instance (Show a, Ord a, Num a) => Diff (Range a) (Range a) where
 instance (Ord a, Num a) => Lattice (Range a) where
     lintersect a b = case (<||>) a  b of
         IsTop -> Nothing
-        Is a -> Just a
+        Is x -> Just x
         IsBot -> error "union on bot"
     lunion = (<?>)
     ltop = pempty
@@ -1113,6 +1017,33 @@ egRebuild' = do
     -- egCompact
     -- post <- gets id
     -- let d =  diff pre post 
-    -- if d /= ltop
+    -- if isNonEmpty d
     -- then error ("Missed analysis: " <> pshow d)
     -- else pure ()
+  where
+    isNonEmpty (EDiff _ a (MapDiff b)) = a /= ltop || not (ILM.null b)
+
+
+-- used for clustering
+-- instance {-# OVERLAPPABLE #-}(DecideIfEdgeLife f a, DecideIfEdgeLife g a) => DecideIfEdgeLife (f :+: g) a where
+--     decideIfEdgeLife d (L1 x) = L1 (decideIfEdgeLife d x)
+--     decideIfEdgeLife d (R1 y) = R1 (decideIfEdgeLife d y)
+-- instance {-# INCOHERENT #-} (Traversable f, DecideIfEdgeLife f a, DecideIfEdgeLife f b) => DecideIfEdgeLife f (a,b) where
+--     decideIfEdgeLife d x = zipFoldableWith (||) l r
+--       where
+--         l = decideIfEdgeLife (fst d) (fmap fst x)
+--         r = decideIfEdgeLife (snd d) (fmap snd x)
+-- instance {-#OVERLAPPING #-} (Pretty s)=> DecideIfEdgeLife (FiniteDomainF s) (FiniteDomain s) where
+--     decideIfEdgeLife (FD s) a = o
+--       where
+--        o 
+--          | BV.size s == 1 = False <$ a
+--          | otherwise = fmap (\(FD s) -> BV.size s /= 1) a
+-- instance {-# OVERLAPPABLE #-}Functor a => DecideIfEdgeLife a (FiniteDomain s) where
+--     decideIfEdgeLife _ a = False <$ a
+-- instance {-#OVERLAPPING #-}DecideIfEdgeLife ArithF (Range Integer) where
+--     decideIfEdgeLife _ a = fmap (isNothing . toPoint) a
+-- instance {-# OVERLAPPABLE #-}DecideIfEdgeLife ArithF a where
+--     decideIfEdgeLife _ a = False <$ a
+-- instance {-# OVERLAPPABLE #-}Functor a => DecideIfEdgeLife a (Range Integer) where
+--     decideIfEdgeLife _ a = False <$ a

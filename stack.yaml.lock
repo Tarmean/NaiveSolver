@@ -66,11 +66,11 @@ packages:
     git: https://github.com/Tarmean/overeasy
     pantry-tree:
       size: 1737
-      sha256: 1b8691a542afc9f19b834e3e12517f7cbe18509684faeb91b041528c82c846d9
-    commit: 5eef4418e3b2e8c643e9afd268bd9e4d6bf7fbcf
+      sha256: cec2ad8a1707e6da2c50c8aeda8e4d1be34a386169f6573787d9498741344a5c
+    commit: 28dffd144ab1bed2eb3aa68e6bc17f18fbffc9bd
   original:
     git: https://github.com/Tarmean/overeasy
-    commit: 5eef4418e3b2e8c643e9afd268bd9e4d6bf7fbcf
+    commit: 28dffd144ab1bed2eb3aa68e6bc17f18fbffc9bd
 - completed:
     name: int-like
     version: 0.1.0

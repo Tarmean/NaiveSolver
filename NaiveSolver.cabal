@@ -26,7 +26,6 @@ source-repository head
 library
   exposed-modules:
       BFSChoiceTree
-      ClusterEGraph
       Data.Bag
       Data.BitVector
       Data.GridPrint
@@ -40,7 +39,6 @@ library
       Data.Mutable.Slice
       Data.Tree.Leafy
       Data.Utils
-      DecisionDiagram
       EGraph.ByteCodeVM
       EGraph.Class
       EGraph.Match
@@ -58,10 +56,6 @@ library
       EGraph.UnionFind
       EPropTest
       FiniteDomains
-      GenericProp
-      IncrementalDatalog
-      IndexADT
-      IndexedWalk
       Lib
       MinMax
       Monad.Amb
@@ -74,6 +68,12 @@ library
       Monad.Snapshot
       Monad.StateT2
       Monad.Zipper
+      Obsolete.ClusterEGraph
+      Obsolete.DecisionDiagram
+      Obsolete.GenericProp
+      Obsolete.IncrementalDatalog
+      Obsolete.IndexADT
+      Obsolete.IndexedWalk
       Optics.Utils
       Propagator
       Range
