@@ -12,7 +12,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | First draft for a propagator dsl that moved to egg in rust
-module IncrementalDatalog where
+module Obsolete.IncrementalDatalog where
 import Language.KURE as K
 
 -- Input: Streams of values

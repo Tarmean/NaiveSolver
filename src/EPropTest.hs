@@ -10,7 +10,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DerivingStrategies #-}
--- | I forked a library to make propagation work,
+-- | I had to fork the Overeasy EGraph library to make propagation work
 -- this module sits between chairs because it references internals from both.
 module EPropTest where
 import ClusterEGraph
@@ -21,7 +21,7 @@ import BFSChoiceTree (mkTree, AppDiffs(..))
 import Control.Arrow (second)
 import Data.Functor.Identity
 import Data.BitVector as BV
-import DecisionDiagram
+-- import DecisionDiagram
 import GenericProp
 import Debug.Trace (traceM)
 import Control.Monad (forM_, when, void)
@@ -260,8 +260,6 @@ mkInput = do
     -- egAddAnalysis o [injectAna (0...(9 :: Integer))]
     egRebuild'
     pure (o, vars)
--- mkTree :: [EClassId] -> 
-mkTree ecs = choiceTree  (fromJust $ flip execStateT egNew $ search1 []) [(ec, S.fromList [inject (ArithConstF i) | i <- [l..(r::Integer)]]) | (ec, l,r) <- ecs]
 diffFor :: [Range Integer] -> EDiff EP
 diffFor inp = diff eg1 eg2
   where
@@ -1012,7 +1010,6 @@ setValM c s =  do
 instance (Pretty d) => Pretty (EDiff d) where
     pretty (EDiff (Merges a) (MapDiff b)) = pretty (ILM.toList b) <> pretty (map (second ILS.toList) $ ILM.toList (efFwd a))
 
-testChoiceTree eg0 = choiceTree eg0 $  tSplits eg0
 tSplits eg0 = take 14 $ (genSplits eg0)
 
 instance (Lattice d) => PSemigroup (EDiff d) where
@@ -1026,45 +1023,6 @@ instance (Lattice d, Pretty d) => PMonoid (EDiff d) where
 
 listDom :: [SudokuNum] -> FiniteDomain SudokuNum
 listDom = FD . BV.fromList 
-type Choices f = [(EClassId, S.Set (f EClassId))]
-choiceTree :: forall d i f.(Pretty (f EClassId), Show i, Pretty i , Pretty (f EClassId), Lattice d, Diff d i, Lattice i, Eq i, Hashable (f EClassId), RegularSemigroup d, PLattice d, Pretty d, EAnalysis d f, Traversable f) =>  EGraph d f -> Choices f -> DD (EClassId, f EClassId) (EDiff i)
-choiceTree eg0 xs = go eg0 xs
- where
-   !_ = trace ("choices: " <> pshow (fmap (second S.toList) xs)) ()
-   goM Nothing _ = IsFalse
-   goM (Just eg1) ls = go eg1 ls
-
-   -- go :: Diff d i => EGraph d f -> Choices f -> DD (EClassId, f EClassId) (EDiff i)
-   go eg ((b,bs):xs) = goI eg b (S.toList bs) (\x -> goM (setVal b x eg) xs)
-   go eg [] =  out
-    where out = Iff (diff eg0 e1)
-          e1 = (execState egCompact eg)
-
-   -- goI :: EGraph d f -> EClassId -> [f EClassId] -> (f EClassId -> DD (EClassId, f EClassId) (EDiff i)) -> DD (EClassId, f EClassId) (EDiff i)
-   goI eg b (a:x:xs) k = mkIf (b, a) (k a) (goI eg b (x:xs) k)
-   goI eg b [a] k = (k a)
-   goI _ _ _ _ = undefined
-
-   -- mkIf v l r
-   --   | trace ("mkIf: " <> pshow v <> " " <> pshow l <> " " <> pshow r) False = undefined
-   mkIf v IsFalse IsFalse = IsFalse
-   mkIf v IsFalse r  = r -- If v (fromMaybe ltop $ valOf r) IsFalse r
-   mkIf v  l IsFalse = l -- If v (fromMaybe ltop $ valOf l) l IsFalse 
-   mkIf v l r 
-     | l == r = l
-     | otherwise = If v merged l r
-     where
-
-       merged = case (valOf l, valOf r) of
-         (Just a, Just b) 
-           | Just o <- lintersect a b -> o
-           | otherwise -> emptyEDiff
-         (Just a, Nothing) -> emptyEDiff
-         (Nothing, Just b) -> emptyEDiff
-         (Nothing, Nothing) -> emptyEDiff
-   repOf l = case valOf l of
-      Just o -> "L " <>  (show o)
-      _ -> "R" <>  (pshow l)
 
 emptyEDiff = EDiff (Merges efNew) (MapDiff mempty)
 valOf (If _ v _ _) = Just v
@@ -1072,21 +1030,6 @@ valOf (Iff s) = Just s
 valOf _ = Nothing
 
 
-fixChoice eg0 = fromJust $ go eg0
-  where
-    go eg = do
-      let choiceTree = (testChoiceTree eg)
-      -- traceM (pshow choiceTree)
-      case valOf choiceTree of
-        Nothing -> trace (show choiceTree) (pure eg)
-        Just d -> do
-          let
-            d = fromJust (valOf choiceTree)
-            eg' = fromJust $ execStateT (egRebuild') =<< (applyDiff d eg)
-          
-          if (d == ltop || eg' == eg)
-          then pure eg
-          else trace (pshow d<> "\n" <> show (printGrid (toGrid eg')))$ go $ eg'
   
 newtype Neg a = Neg a
   deriving (Eq, Ord, Show, Hashable, Generic)
@@ -1152,17 +1095,6 @@ instance PMonoid () where
     pempty = ()
 instance PSemigroup () where
     (<?>) _ _ = Just ()
-    -- intersectAnalysis a b = case a <||> b of
-    --    IsBot -> error "bot should not be in egraph"
-    --    IsTop ->  Nothing
-    --    Is o -> Just o
-
--- instance (Pretty (a), PLattice a, RegularSemigroup a) => DeltaAnalysis a where
---     deltaAnalysis a b = (a ==>? b)
---     intersectAnalysis a b = case a <||> b of
---        IsBot -> error "bot should not be in egraph"
---        IsTop ->  Nothing
---        Is o -> Just o
 
 
 collectNew :: (Traversable f, EAnalysis o f, Hashable (f EClassId), RegularSemigroup o) => EGraph o f -> EGraph o f -> [(EClassId, o, o)]
@@ -1184,174 +1116,3 @@ egRebuild' = do
     -- if d /= ltop
     -- then error ("Missed analysis: " <> pshow d)
     -- else pure ()
-
-
-
-diffL :: EDiff (Range Integer, Neg (FiniteDomain SudokuNum))
-diffL = EDiff {
-    eMerges = Merges (EquivFind {efFwd = ILM.fromList [
-        (EClassId 1,ILS.fromList [EClassId 74]),
-        (EClassId 5,ILS.fromList [EClassId 55,EClassId 70,EClassId 76]),
-        (EClassId 8,ILS.fromList [EClassId 60]),
-        (EClassId 18,ILS.fromList [EClassId 79]),
-        (EClassId 25,ILS.fromList [EClassId 57,EClassId 69]),
-        (EClassId 29,ILS.fromList [EClassId 61,EClassId 75]),
-        (EClassId 39,ILS.fromList [EClassId 73]),
-        (EClassId 52,ILS.fromList [EClassId 54,EClassId 78])
-    ], efBwd = ILM.fromList [
-        (EClassId 54,EClassId {unEClassId = 52}),
-        (EClassId 55,EClassId {unEClassId = 5}),
-        (EClassId 57,EClassId {unEClassId = 25}),
-        (EClassId 60,EClassId {unEClassId = 8}),
-        (EClassId 61,EClassId {unEClassId = 29}),
-        (EClassId 69,EClassId {unEClassId = 25}),
-        (EClassId 70,EClassId {unEClassId = 5}),
-        (EClassId 73,EClassId {unEClassId = 39}),
-        (EClassId 74,EClassId {unEClassId = 1}),
-        (EClassId 75,EClassId {unEClassId = 29}),
-        (EClassId 76,EClassId {unEClassId = 5}),
-        (EClassId 78,EClassId {unEClassId = 52}),
-        (EClassId 79,EClassId {unEClassId = 18})
-    ], efBwdAll = ILM.fromList [
-        (EClassId 54,EClassId {unEClassId = 52}),
-        (EClassId 55,EClassId {unEClassId = 5}),
-        (EClassId 57,EClassId {unEClassId = 25}),
-        (EClassId 60,EClassId {unEClassId = 8}),
-        (EClassId 61,EClassId {unEClassId = 29}),
-        (EClassId 69,EClassId {unEClassId = 25}),
-        (EClassId 70,EClassId {unEClassId = 5}),
-        (EClassId 73,EClassId {unEClassId = 39}),
-        (EClassId 74,EClassId {unEClassId = 1}),
-        (EClassId 75,EClassId {unEClassId = 29}),
-        (EClassId 76,EClassId {unEClassId = 5}),
-        (EClassId 78,EClassId {unEClassId = 52}),
-        (EClassId 79,EClassId {unEClassId = 18})
-    ]}), eAna = MapDiff {mapDiff = ILM.fromList [
-        (EClassId 0,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 2}}))),
-        (EClassId 3,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 132}}))),
-        (EClassId 6,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 7,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 260}}))),
-        (EClassId 9,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 10,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 34}}))),
-        (EClassId 12,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 132}}))),
-        (EClassId 15,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 16,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 262}}))),
-        (EClassId 19,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 34}}))),
-        (EClassId 21,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 4}}))),
-        (EClassId 24,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 27,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 28,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 32}}))),
-        (EClassId 33,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 36,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 38,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 64}}))),
-        (EClassId 42,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 43,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 258}}))),
-        (EClassId 46,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 32}}))),
-        (EClassId 47,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 64}}))),
-        (EClassId 48,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 51,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 55,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 17}}))),
-        (EClassId 57,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 5}}))),
-        (EClassId 60,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 135}}))),
-        (EClassId 61,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 2}}))),
-        (EClassId 64,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 3}}))),
-        (EClassId 65,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 67}}))),
-        (EClassId 66,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 67,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 130}}))),
-        (EClassId 68,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 69,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 275}}))),
-        (EClassId 70,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 256}}))),
-        (EClassId 73,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 3}}))),
-        (EClassId 74,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 35}}))),
-        (EClassId 75,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 321}}))),
-        (EClassId 76,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 321}}))),
-        (EClassId 78,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 262}}))),
-        (EClassId 79,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 6}})))
-    ]}
-}
-
-diffR = EDiff {
-    eMerges = Merges (
-        EquivFind {efFwd = ILM.fromList [
-            (EClassId 1,ILS.fromList [EClassId 74]),
-            (EClassId 5,ILS.fromList [EClassId 55,EClassId 79]),
-            (EClassId 8,ILS.fromList [EClassId 60]),
-            (EClassId 18,ILS.fromList [EClassId 70,EClassId 76]),
-            (EClassId 25,ILS.fromList [EClassId 57,EClassId 69]),
-            (EClassId 29,ILS.fromList [EClassId 61,EClassId 75]),
-            (EClassId 39,ILS.fromList [EClassId 73]),
-            (EClassId 52,ILS.fromList [EClassId 54,EClassId 78])
-        ], efBwd = ILM.fromList [
-            (EClassId 54,EClassId {unEClassId = 52}),
-            (EClassId 55,EClassId {unEClassId = 5}),
-            (EClassId 57,EClassId {unEClassId = 25}),
-            (EClassId 60,EClassId {unEClassId = 8}),
-            (EClassId 61,EClassId {unEClassId = 29}),
-            (EClassId 69,EClassId {unEClassId = 25}),
-            (EClassId 70,EClassId {unEClassId = 18}),
-            (EClassId 73,EClassId {unEClassId = 39}),
-            (EClassId 74,EClassId {unEClassId = 1}),
-            (EClassId 75,EClassId {unEClassId = 29}),
-            (EClassId 76,EClassId {unEClassId = 18}),
-            (EClassId 78,EClassId {unEClassId = 52}),
-            (EClassId 79,EClassId {unEClassId = 5})
-        ], efBwdAll = ILM.fromList [
-            (EClassId 54,EClassId {unEClassId = 52}),
-            (EClassId 55,EClassId {unEClassId = 5}),
-            (EClassId 57,EClassId {unEClassId = 25}),
-            (EClassId 60,EClassId {unEClassId = 8}),
-            (EClassId 61,EClassId {unEClassId = 29}),
-            (EClassId 69,EClassId {unEClassId = 25}),
-            (EClassId 70,EClassId {unEClassId = 18}),
-            (EClassId 73,EClassId {unEClassId = 39}),
-            (EClassId 74,EClassId {unEClassId = 1}),
-            (EClassId 75,EClassId {unEClassId = 29}),
-            (EClassId 76,EClassId {unEClassId = 18}),
-            (EClassId 78,EClassId {unEClassId = 52}),
-            (EClassId 79,EClassId {unEClassId = 5})
-        ]}
-    ), eAna = MapDiff {mapDiff = ILM.fromList [
-        -- (EClassId 0,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 3,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 132}}))),
-        (EClassId 4,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 256}}))),
-        (EClassId 6,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 7,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 260}}))),
-        (EClassId 9,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 10,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 34}}))),
-        (EClassId 12,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 132}}))),
-        (EClassId 13,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 256}}))),
-        (EClassId 15,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 16,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 262}}))),
-        (EClassId 19,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 34}}))),
-        (EClassId 21,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 4}}))),
-        (EClassId 24,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 27,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 28,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 32}}))),
-        (EClassId 33,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 36,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 1}}))),
-        (EClassId 38,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 64}}))),
-        (EClassId 42,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 43,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 258}}))),
-        (EClassId 46,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 32}}))),
-        (EClassId 47,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 64}}))),
-        (EClassId 48,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 51,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 55,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 17}}))),
-        (EClassId 57,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 5}}))),
-        (EClassId 60,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 135}}))),
-        (EClassId 61,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 2}}))),
-        (EClassId 64,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 3}}))),
-        (EClassId 65,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 67}}))),
-        (EClassId 66,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 384}}))),
-        (EClassId 67,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 384}}))),
-        (EClassId 68,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 128}}))),
-        (EClassId 69,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 275}}))),
-        (EClassId 70,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 2}}))),
-        (EClassId 73,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 3}}))),
-        (EClassId 74,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 35}}))),
-        (EClassId 75,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 321}}))),
-        (EClassId 76,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 67}}))),
-        (EClassId 78,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 262}}))),
-        (EClassId 79,(Range Nothing Nothing,Neg (FD {members = BitArray {unBitArray = 260}})))
-    ]}}
-

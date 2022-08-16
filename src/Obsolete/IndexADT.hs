@@ -4,8 +4,8 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE QualifiedDo #-}
 -- Sketch for a type-safe api that is obsoleted by zipper stuff
-module IndexADT where
-import qualified IndexedWalk as Ix
+module Obsolete.IndexADT where
+import qualified Obsolete.IndexedWalk as Ix
 import GHC.Generics
 import GHC.Types
 import GHC.TypeLits

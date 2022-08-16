@@ -1,4 +1,4 @@
-module IndexedWalk where
+module Obsolete.IndexedWalk where
 -- | See IndexADT
 import Prelude hiding ((*>), (>>=))
 import qualified Prelude as P

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -15,6 +16,7 @@ import qualified Data.Map.Merge.Lazy as M
 import qualified Data.Map.Strict as M
 import Data.Maybe (isNothing)
 import qualified Prettyprinter as P
+import Control.Monad.State
 
 main :: IO ()
 main = print "bdd"
@@ -238,3 +240,39 @@ instance (Eq e, PMonoid e, P.Pretty v, P.Pretty e) => P.Pretty (DD v e) where
       | otherwise -> P.parens $ P.sep [P.pretty s, P.pretty "&&" P.<+> body]
       where body = P.align $ P.sep [P.pretty "v" P.<> P.pretty x, P.pretty "?" P.<+> P.pretty y , P.pretty ":" P.<+> P.pretty z]
     Iff s -> P.pretty s
+
+
+
+instance (PSemigroup a,PSemigroup b) => PSemigroup (a,b) where
+  (<?>) (a,b) (e,f) = liftM2 (,) (a <?> e) (b <?> f)
+instance (PMonoid a,PMonoid b) => PMonoid (a,b) where
+  pempty = (pempty,pempty)
+instance (PMonoid a, PMonoid b, PLattice a,PLattice b) => PLattice (a,b) where
+  (<||>) (a,b) (e,f) = (a <||> e) <**> (b <||> f)
+instance (PSemigroup a,PSemigroup b, PSemigroup c, PSemigroup d) => PSemigroup (a,b,c,d) where
+  (<?>) (a,b,c,d) (e,f,g,h) = liftM4 (,,,) (a <?> e) (b <?> f) (c <?> g) (d <?> h)
+instance (PMonoid a,PMonoid b, PMonoid c, PMonoid d) => PMonoid (a,b,c,d) where
+  pempty = (pempty,pempty,pempty,pempty)
+instance (PMonoid a,PMonoid b,PMonoid c,PMonoid d,PLattice a,PLattice b, PLattice c, PLattice d) => PLattice (a,b,c,d) where
+  (<||>) (a,b,c,d) (e,f,g,h) = case (a <||> e) <**> (b <||> f) <**> (c <||> g) <**> (d <||> h) of
+     IsBot -> IsBot
+     IsTop -> IsTop
+     Is ((((p),q),r),s) -> Is (p,q,r,s)
+instance (BoundedLattice a, BoundedLattice b, BoundedLattice c, BoundedLattice d, PMonoid (a,b,c,d), PLattice (a,b,c,d), Eq (a,b,c,d)) => BoundedLattice (a,b,c,d) where
+    bot = (bot,bot,bot,bot)
+    isBot x = bot == x
+
+
+instance (PMonoid a,PMonoid b,PMonoid c,PMonoid d, RegularSemigroup a, RegularSemigroup b, RegularSemigroup c, RegularSemigroup d) => RegularSemigroup (a,b,c,d) where
+  (==>) (a,b,c,d) (e, f, g, h) = (a ==> e, b ==> f, c ==> g, d ==> h)
+  (==>?) (a,b,c,d) (e, f, g, h)
+     | or [l1,l2,l3,l4] = Just (q,r,s,t)
+     | otherwise = Nothing
+    where
+      (l1, q) = mk a e
+      (l2, r) = mk b f
+      (l3, s) = mk c g
+      (l4, t) = mk d h
+      mk x y = case x ==>? y of
+         Nothing -> (False, top)
+         Just z -> (True, z)

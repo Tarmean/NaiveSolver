@@ -1,8 +1,9 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
--- | Decision trees labeled by lattices
+-- | Binary Decision trees labeled by lattices
 -- Propagates information that holds accross branches upwards
-module DecisionDiagram where
+-- see also BFSChoiceTree for DAGs with approximate conjunction
+module Obsolete.DecisionDiagram where
 import Types
 import Test.QuickCheck hiding ((==>))
 import GHC.Generics (Generic)
@@ -465,6 +466,64 @@ searchNonDet = go
           go l
 doesTerminate :: BExpr -> IO Bool
 doesTerminate = fmap isJust . timeout 12000 . (\x -> x `seq` pure ()) . toBDDNaive
+
+-- testChoiceTree eg0 = choiceTree eg0 $  tSplits eg0
+-- type Choices f = [(EClassId, S.Set (f EClassId))]
+-- choiceTree :: forall d i f.(Pretty (f EClassId), Show i, Pretty i , Pretty (f EClassId), Lattice d, Diff d i, Lattice i, Eq i, Hashable (f EClassId), RegularSemigroup d, PLattice d, Pretty d, EAnalysis d f, Traversable f) =>  EGraph d f -> Choices f -> DD (EClassId, f EClassId) (EDiff i)
+-- choiceTree eg0 xs = go eg0 xs
+--  where
+--    !_ = trace ("choices: " <> pshow (fmap (second S.toList) xs)) ()
+--    goM Nothing _ = IsFalse
+--    goM (Just eg1) ls = go eg1 ls
+
+--    -- go :: Diff d i => EGraph d f -> Choices f -> DD (EClassId, f EClassId) (EDiff i)
+--    go eg ((b,bs):xs) = goI eg b (S.toList bs) (\x -> goM (setVal b x eg) xs)
+--    go eg [] =  out
+--     where out = Iff (diff eg0 e1)
+--           e1 = (execState egCompact eg)
+
+--    -- goI :: EGraph d f -> EClassId -> [f EClassId] -> (f EClassId -> DD (EClassId, f EClassId) (EDiff i)) -> DD (EClassId, f EClassId) (EDiff i)
+--    goI eg b (a:x:xs) k = mkIf (b, a) (k a) (goI eg b (x:xs) k)
+--    goI eg b [a] k = (k a)
+--    goI _ _ _ _ = undefined
+
+--    -- mkIf v l r
+--    --   | trace ("mkIf: " <> pshow v <> " " <> pshow l <> " " <> pshow r) False = undefined
+--    mkIf v IsFalse IsFalse = IsFalse
+--    mkIf v IsFalse r  = r -- If v (fromMaybe ltop $ valOf r) IsFalse r
+--    mkIf v  l IsFalse = l -- If v (fromMaybe ltop $ valOf l) l IsFalse 
+--    mkIf v l r 
+--      | l == r = l
+--      | otherwise = If v merged l r
+--      where
+
+--        merged = case (valOf l, valOf r) of
+--          (Just a, Just b) 
+--            | Just o <- lintersect a b -> o
+--            | otherwise -> emptyEDiff
+--          (Just a, Nothing) -> emptyEDiff
+--          (Nothing, Just b) -> emptyEDiff
+--          (Nothing, Nothing) -> emptyEDiff
+--    repOf l = case valOf l of
+--       Just o -> "L " <>  (show o)
+--       _ -> "R" <>  (pshow l)
+-- fixChoice eg0 = fromJust $ go eg0
+--   where
+--     go eg = do
+--       let choiceTree = (testChoiceTree eg)
+--       -- traceM (pshow choiceTree)
+--       case valOf choiceTree of
+--         Nothing -> trace (show choiceTree) (pure eg)
+--         Just d -> do
+--           let
+--             d = fromJust (valOf choiceTree)
+--             eg' = fromJust $ execStateT (egRebuild') =<< (applyDiff d eg)
+          
+--           if (d == ltop || eg' == eg)
+--           then pure eg
+--           else trace (pshow d<> "\n" <> show (printGrid (toGrid eg')))$ go $ eg'
+
+-- mkTree ecs = choiceTree  (fromJust $ flip execStateT egNew $ search1 []) [(ec, S.fromList [inject (ArithConstF i) | i <- [l..(r::Integer)]]) | (ec, l,r) <- ecs]
 
 -- testSplit = split 1 $ And (
 -- mAnd :: forall s. (IsLit v s, PMonoid s) => [DD v s] -> DD v s

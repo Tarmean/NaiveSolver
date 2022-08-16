@@ -5,7 +5,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | Turn tuples of propagators into propagators of tuples
 -- Mostly obsolete because egraphs do it better
-module GenericProp where
+module Obsolete.GenericProp where
 
 
 
@@ -46,6 +46,14 @@ type family RelevantListG (a::k -> Type) (b::Type) (acc :: [Type]) :: [Type] whe
     RelevantListG (l :+: r) a acc = RelevantListG l a (RelevantListG r a acc)
 type RelevantList a b = RelevantListG (Rep a) b '[]
 
+class TryNormalize a where
+    tryNormalize1 :: a -> Maybe a
+tryNormalize :: (TryNormalize a) => a -> Maybe a
+tryNormalize a = tryNormalize1 =<< tryNormalize1 a
+instance PropAll (ClauseList a) a (ExceptT (S.Set Var) (StateT a Identity)) => TryNormalize a where
+    tryNormalize1 a = case runState (runExceptT (propAll @(ClauseList a) @a :: ExceptT (S.Set Var) (StateT a Identity) ())) a of
+      (Left _,_) -> Nothing
+      (Right _,b) -> Just b
 type family ClauseListG (a::k -> Type) (acc :: [Type]) :: [Type] where
     ClauseListG V1 acc = acc
     ClauseListG U1 acc = acc
@@ -91,52 +99,12 @@ type TestType = ((PropEnv (Val Bool)),(PropEnv (Range Int)), ClauseSet Plus, Cla
 emptyTest :: TestType
 emptyTest = (emptyPropEnv, emptyPropEnv, mkClauseSet(S.singleton (Plus 1 2 3)), mkClauseSet(S.singleton (LessEqThan 5 3 1)))
 
-class TryNormalize a where
-    tryNormalize1 :: a -> Maybe a
-instance PropAll (ClauseList a) a (ExceptT (S.Set Var) (StateT a Identity)) => TryNormalize a where
-    tryNormalize1 a = case runState (runExceptT (propAll @(ClauseList a) @a :: ExceptT (S.Set Var) (StateT a Identity) ())) a of
-      (Left _,_) -> Nothing
-      (Right _,b) -> Just b
-tryNormalize :: (TryNormalize a) => a -> Maybe a
-tryNormalize a = tryNormalize1 =<< tryNormalize1 a
 
-
-instance (PSemigroup a,PSemigroup b) => PSemigroup (a,b) where
-  (<?>) (a,b) (e,f) = liftM2 (,) (a <?> e) (b <?> f)
-instance (PMonoid a,PMonoid b) => PMonoid (a,b) where
-  pempty = (pempty,pempty)
-instance (PMonoid a, PMonoid b, PLattice a,PLattice b) => PLattice (a,b) where
-  (<||>) (a,b) (e,f) = (a <||> e) <**> (b <||> f)
-instance (TryNormalize (a,b,c,d), PSemigroup a,PSemigroup b, PSemigroup c, PSemigroup d) => PSemigroup (a,b,c,d) where
-  (<?>) (a,b,c,d) (e,f,g,h) = tryNormalize =<< liftM4 (,,,) (a <?> e) (b <?> f) (c <?> g) (d <?> h)
-instance (TryNormalize (a,b,c,d), PMonoid a,PMonoid b, PMonoid c, PMonoid d) => PMonoid (a,b,c,d) where
-  pempty = (pempty,pempty,pempty,pempty)
-instance (TryNormalize (a,b,c,d), PMonoid a,PMonoid b,PMonoid c,PMonoid d,PLattice a,PLattice b, PLattice c, PLattice d) => PLattice (a,b,c,d) where
-  (<||>) (a,b,c,d) (e,f,g,h) = case (a <||> e) <**> (b <||> f) <**> (c <||> g) <**> (d <||> h) of
-     IsBot -> IsBot
-     IsTop -> IsTop
-     Is ((((p),q),r),s) -> Is (p,q,r,s)
-instance (BoundedLattice a, BoundedLattice b, BoundedLattice c, BoundedLattice d, PMonoid (a,b,c,d), PLattice (a,b,c,d), Eq (a,b,c,d)) => BoundedLattice (a,b,c,d) where
-    bot = (bot,bot,bot,bot)
-    isBot x = bot == x
 
 injectClause :: forall s o. (PMonoid o, HasType (ClauseSet s) o, Ord s) => s -> o
 injectClause s = pempty & typed @(ClauseSet s) %~ \x -> x { newClauses = S.insert s (newClauses x) }
 
      
-instance (PMonoid a,PMonoid b,PMonoid c,PMonoid d, TryNormalize (a,b,c,d), RegularSemigroup a, RegularSemigroup b, RegularSemigroup c, RegularSemigroup d) => RegularSemigroup (a,b,c,d) where
-  (==>) (a,b,c,d) (e, f, g, h) = (a ==> e, b ==> f, c ==> g, d ==> h)
-  (==>?) (a,b,c,d) (e, f, g, h)
-     | or [l1,l2,l3,l4] = Just (q,r,s,t)
-     | otherwise = Nothing
-    where
-      (l1, q) = mk a e
-      (l2, r) = mk b f
-      (l3, s) = mk c g
-      (l4, t) = mk d h
-      mk x y = case x ==>? y of
-         Nothing -> (False, top)
-         Just z -> (True, z)
 
 newtype Compound a = Compound { getCompound :: a } deriving (Eq,Ord,Show, PSemigroup, PLattice, PMonoid, RegularSemigroup, BoundedLattice, TryNormalize)
 
