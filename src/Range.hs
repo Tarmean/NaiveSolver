@@ -250,11 +250,12 @@ instance (Integral a, Eq a) => Enum (Range a) where
   toEnum i = Range (Just $ fromIntegral i) (Just $ fromIntegral i)
   fromEnum (Range (Just i) (Just j)) | i == j = fromIntegral i
   fromEnum _ = undefined
-instance (Ord a, Integral a) => Integral (Range a) where
+instance (Show a, Ord a, Integral a) => Integral (Range a) where
   div = divI
-  mod = mod3
+  -- mod = mod3
   toInteger = undefined
-  quotRem = undefined
+  rem = rem3
+  quot = divI
 
 (...) :: (Ord a, Num a) => a -> a -> Range a
 (...) a b = Range (Just a) (Just b)
@@ -336,15 +337,6 @@ zright (Range (Just a) b)
   | a > 0 = Range (Just a) b
 zright (Range _ b) = Range (Just 0) b 
 
-mod1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
-mod1 l m
-  | m < 0 = - (mod1 l (-m))
-mod1 l@(Range (Just a) (Just b)) m
-  | a > b || m == 0 = bot
-  | b < 0 = - mod1 (-l) m
-  | a < 0 = mod1 (a... -1) m ||| mod1 (0...b) m
-  | b - a < abs m && a `mod` m <= b `mod` m = (a `mod` m) ... (b `mod` m)
-mod1 _ m = 0...(abs m - 1)
 
 
 -- full modulo divison in python:
@@ -386,28 +378,48 @@ mod1 _ m = 0...(abs m - 1)
 
 -- haskell version:
 
-mod3 :: (Integral a, Ord a, Num a) => Range a -> Range a -> Range a
-mod3 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
+rem3 :: (Show a, Integral a, Ord a, Num a) => Range a -> Range a -> Range a
+rem3 l@(Range (Just _) (Just _)) r@(Range (Just _) (Just _))
   | isBot l || isBot r = bot
-  | otherwise = ((mod4 (-left l) (-(left r)))) ||| (-mod4 (-left l) (right r))  ||| (-(mod4 (zright l) (-left r))) ||| (mod4 (zright l) (zright r))
-mod3 _ (Range _ (Just n)) = 0...(n-1)
-mod3 _ (Range _ Nothing) = Range (Just 0) Nothing
+  | otherwise = (-(mod4 (-left l) (-(left r)))) ||| (-mod4 (-left l) (right r))  ||| ((mod4 (zright l) (-left r))) ||| (mod4 (zright l) (zright r))
+rem3 _ (Range _ (Just n)) = 0...(n-1)
+rem3 _ (Range _ Nothing) = Range (Just 0) Nothing
+
+testMod l r = contains (bruteForce mod0 l r) (rem3 l r)
+  where
+mod0 :: (Integral t) => Range t -> Range t -> Range t
+mod0 a b = case (toPoint a, toPoint b) of
+   (Just x, Just y) 
+     | y == 0 -> bot
+     | otherwise -> mkRange (x `rem` y)
 
 -- testEq :: (Int,Int) -> (Int,Int) -> Bool
 -- testEq a b = mod3 l r == mod2 l r
 --   where
 --     l = fromTuple a
 --     r = fromTuple b
+mod4 :: (Integral a, Show a) => Range a -> Range a -> Range a
+mod4 l r 
+  | isBot l || isBot r = bot
 mod4 l@(Range (Just a) (Just b)) r@(Range (Just m) (Just n))
-  | a < 0 = (- (mod3 (- left l) r)) ||| mod3 (zright l) r
   | m == n = mod1 l m
   | b-a >= n = 0...(n-1)
-  | b-a >= m = 0...(b-a-1) ||| mod3 (a...b) ((b-a+1)...n)
+  | b-a >= m = 0...(b-a-1) ||| rem3 (a...b) ((b-a+1)...n)
   | m > b = l
   | n > b = 0...b
   | a == b && even a && n <= 2 = 0...0
 mod4 _ (Range _ (Just n)) = 0...(n-1)
 mod4 _ (Range _ Nothing) = Range (Just 0) Nothing
+
+mod1 :: (Integral a, Ord a, Num a) => Range a -> a -> Range a
+mod1 l m
+  | m < 0 = - (mod1 l (-m))
+mod1 l@(Range (Just a) (Just b)) m
+  | m == 0 = bot
+  | b < 0 = error "no2" -- - mod1 (-l) m
+  | a < 0 = error "no3" -- mod1 (a... -1) m ||| mod1 (0...b) m
+  | b - a < abs m && a `mod` m <= b `mod` m = (a `mod` m) ... (b `mod` m)
+mod1 _ m = 0...(abs m - 1)
   
 
 dMod x y = aMod (zright x) (right y)
