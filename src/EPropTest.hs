@@ -113,6 +113,36 @@ deriving stock instance Generic (ArithF a)
 deriving anyclass instance Hashable a => Hashable (ArithF a)
 deriving anyclass instance NFData a => NFData (ArithF a)
 
+instance  EAnalysis (Range Integer) ArithF where
+    eaMake = \case
+        ArithPlusF a b -> a + b
+        ArithMinusF a b -> a - b
+        ArithTimesF a b -> a * b
+        ArithModF a b -> mod a b
+        ArithDivF a b -> div a b
+        ArithTryDivF a b -> let out = div a b in if isBot out then top else out
+        ArithConstF c -> fromIntegral c
+        ArithShiftLF a l -> a * 2^l
+        ArithShiftRF a l -> a `div` 2^l
+        ArithInvDivF aDivB b _ -> (aDivB + (0||| signum b)) * b
+          where
+    eHook cls = do
+        dat <- eaClassData cls
+        when (isBot dat) (eaHalt)
+        case toPoint dat of 
+            Just o -> do
+              t <- eaAddTerm (ArithConstF o)
+              eaMerge cls t
+            Nothing -> pure ()
+instance  EAnalysisMerge (Range Integer)  where
+    eaJoin l rs
+       | isBot out = out
+       | otherwise = out
+      where
+        out = foldr (&&&) l rs
+instance  EAnalysisIntersection (Range Integer)  where
+    eaMeet l rs =  (|||) l rs
+
 mkPlus :: EClassId -> EClassId -> StateT Eg3 Maybe EClassId
 mkPlus a b = do
     (_, c) <- egAddFlatTerm (inject $ ArithPlusF a b)
@@ -565,35 +595,6 @@ instance  (Pretty a, Hashable a, Ord a, Enum a, Bounded a) => EAnalysis (FiniteD
               eaMerge cls t
             Nothing -> pure ()
 
-instance  EAnalysis (Range Integer) ArithF where
-    eaMake = \case
-        ArithPlusF a b -> a + b
-        ArithMinusF a b -> a - b
-        ArithTimesF a b -> a * b
-        ArithModF a b -> mod a b
-        ArithDivF a b -> div a b
-        ArithTryDivF a b -> let out = div a b in if isBot out then top else out
-        ArithConstF c -> fromIntegral c
-        ArithShiftLF a l -> a * 2^l
-        ArithShiftRF a l -> a `div` 2^l
-        ArithInvDivF aDivB b _ -> (aDivB + (0||| signum b)) * b
-          where
-    eHook cls = do
-        dat <- eaClassData cls
-        when (isBot dat) (eaHalt)
-        case toPoint dat of 
-            Just o -> do
-              t <- eaAddTerm (ArithConstF o)
-              eaMerge cls t
-            Nothing -> pure ()
-instance  EAnalysisMerge (Range Integer)  where
-    eaJoin l rs
-       | isBot out = out
-       | otherwise = out
-      where
-        out = foldr (&&&) l rs
-instance  EAnalysisIntersection (Range Integer)  where
-    eaMeet l rs =  (|||) l rs
 instance  (BoundedLattice a, BoundedLattice b) => EAnalysisIntersection (a,b)  where
     eaMeet (la, lb) (ra, rb) = (la ||| ra, lb ||| rb)  
 instance  (Pretty a, Bounded a, Enum a, Ord a) => EAnalysisMerge (FiniteDomain a)  where

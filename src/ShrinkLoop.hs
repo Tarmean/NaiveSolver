@@ -29,6 +29,30 @@ import Control.Monad.Writer (execWriterT, MonadWriter (tell))
 import GHC.Stack
 import Data.Utils
 
+{-# INLINABLE replaceValue #-}
+replaceValue ::(Num k, HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k) => Traversal' o o -> k -> o -> m ()
+replaceValue l k v = do
+    navTo l k
+    setCursor v
+    newDeps <- depsMap l
+    addDeps newDeps
+    getParent k >>= \case
+      Nothing -> pure ()
+      Just p -> addChild p (theIdx v)
+    deleteNodesBelow k
+
+{-# INLINABLE partialShrink #-}
+partialShrink :: (Num k, Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => Int -> GenAction m -> m (ShrinkResult k)
+partialShrink size g = do
+    _ <- popChangedNodes
+    p <- snapshot
+    (quotaShrink size g) >>= \case
+      True -> do
+        affected <- popChangedNodes
+        if S.null affected
+        then pure NoShrinksLeft
+        else (checkpoint >> pure (FullyShrunk affected)) <|> (restore p >> popChangedNodes >> pure (ShrinkFailed affected))
+      False -> pure (NoShrinksLeft)
 
 traceM :: Monad m => String -> m ()
 traceM _ = pure ()
@@ -40,41 +64,15 @@ unAction m i = cut (fmap Just (getAction m i) <|> pure Nothing)
 
 instance (MonadPlus m, MonadCut m) => Semigroup (GenAction m) where
   {-# INLINABLE (<>) #-}
-  (<>) l r = GenAction $ \i -> --forI i (i - 2) ||| forI i (i `div` 2) ||| getAction l i ||| getAction r i
-    -- where
+  (<>) l r = GenAction $ \i -> 
        (getAction l i) <|> (getAction r i)
-      -- forI i i' = (mfilter ((>i)) $ getAction l i) ||| (mfilter ((>i)) $ getAction r i)
 
 instance (MonadCut m, MonadPlus m) => Monoid (GenAction m) where
    mempty = GenAction $ \_ -> mzero
 
--- doShrink :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> m Bool
--- doShrink g = do
---     fullSize <- nodeCount
---     branchCheckpoint (quotaShrink fullSize g) (pure ()) (has_conflict g)
 
--- has_conflict :: (Num k, Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => GenAction m -> m ()
--- has_conflict g = do
---     fullSize <- nodeCount
---     if fullSize > 1 then do
---         o <- branchCheckpoint (quotaShrink (fullSize `div` 2) g) (has_conflict g) (has_conflict g)
---         when (not o) markAllCritical
---     else markAllCritical
 
 data ShrinkResult k = FullyShrunk (S.Set k) | NoShrinksLeft | ShrinkFailed (S.Set k)
-{-# INLINABLE partialShrink #-}
-partialShrink :: (Num k, Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m) => Int -> GenAction m -> m (ShrinkResult k)
-partialShrink size g = do
-    _ <- popChangedNodes
-    p <- snapshot
-    (quotaShrink size g) >>= \case
-      True -> do
-        affected <- popChangedNodes
-        -- traceM [fmt|partialShrink: affected nodes: {show (compact affected)}|]
-        if S.null affected
-        then pure NoShrinksLeft
-        else (checkpoint >> pure (FullyShrunk affected)) <|> (restore p >> popChangedNodes >> pure (ShrinkFailed affected))
-      False -> pure (NoShrinksLeft)
 
 data SearchState k = SearchState {
     blocked :: [S.Set k],
@@ -107,33 +105,10 @@ performNextAction gen = do
      active <- getActiveNodes
      case bb of
        Just s'  -> do
-           -- traceM [fmt|unblocking {show s'}|]
            takeBlocked s'
            unblockAction gen s'
            pure True
        _ -> traceM "no blocekd left" *> pure False
-       -- _ -> do
-         -- let
-         --   stepFor step cont = do
-         --    r <- lift $ partialShrink step gen
-         --    case r of
-         --      ShrinkFailed ls -> do
-         --        mapM_ hideNodeUnsafe ls
-         --        addBlocked ls
-         --        pure True
-         --      NoShrinksLeft -> do
-         --        case bb of
-         --           Just s' -> do
-         --               -- traceM [fmt|unblocking {show s'}|]
-         --               takeBlocked s'
-         --               unblockAction gen s'
-         --               pure True
-         --           Nothing -> do
-         --              cont
-                -- traceM [fmt|stepping with size {step}, no shrink|] >> pure (isJust bb)
-              -- _ -> pure True
-         -- let step = S.size active *5
-         -- stepFor step (pure False)
 {-# INLINABLE smartLoop #-}
 smartLoop :: (Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m, MonadCritical k m, Num k) => GenAction m -> m ()
 smartLoop gen = flip evalStateT (SearchState [] 8 []) $ do
@@ -154,7 +129,6 @@ tryDelete :: (Num k, MonadCritical k m, Show k, MonadSnapshot m, MonadGraphMut k
 tryDelete g s
   | S.size s == 1 = leafRegion s
 tryDelete g s = do
-    -- traceM [fmt|tryDelete: block {show s}|]
     mapM_ unhideNode s
     (r, left, theQuota) <- focusOn s $ do
         let step = S.size s - S.size s `div` 2
@@ -164,23 +138,17 @@ tryDelete g s = do
     case r of
       ShrinkFailed ls -> do
         let critRegion = left S.\\ ls
-        -- when (not $ null critRegion) (error [fmt|illegal crit region {show left} {show ls}|])
-        -- traceM ("try delete hit " <> show ls <> ", restoring" <> show (left S.\\ ls))
         mapM_ hideNodeUnsafe ls
         addBlocked ls
       NoShrinksLeft -> do
-        -- traceM [fmt|no shrinks left for {show s} with quota {theQuota}|]
         pure ()
       FullyShrunk notIt -> do
         let critRegion = left S.\\ notIt
         when (not $ S.null critRegion) $ do
-            -- traceM [fmt|fully shrunk {show notIt} out of {show s}, remainder {show critRegion}|]
             tryDelete g critRegion
-        -- addBlocked critRegion
 {-# INLINABLE unblockAction #-}
 unblockAction :: (MonadCritical k m, Show k, MonadSnapshot m, MonadGraphMut k m, MonadOracle m, Alternative m, MonadCut m, Num k) => GenAction m -> S.Set k -> StateT (SearchState k) m  ()
 unblockAction g s = do
-    -- traceM [fmt|unblock action: block {show s}|]
     mapM_ unhideNode s
     (r, left, theQuota) <- focusOn s $ do
         let quota = S.size s - S.size s `div` 2
@@ -195,14 +163,10 @@ unblockAction g s = do
         let rhs = (left S.\\ ls)
         when (not $ S.null rhs) $ tryDelete g rhs
       NoShrinksLeft -> do
-        -- traceM [fmt|no shrinks left for {show s} with quota {theQuota}|]
         leafRegion s
       FullyShrunk notIt -> do
         let critRegion = left S.\\ notIt
-        -- mapM_ hideNodeUnsafe critRegion
-        -- traceM [fmt|fully shrunk {show (compact notIt)} out of {show (compact s)}, remainder {show (compact critRegion)}|]
         unblockAction g critRegion
-        -- addBlocked critRegion
 {-# INLINABLE leafRegion #-}
 leafRegion :: (MonadGraphMut a m, MonadCritical a m, Show a) => S.Set a -> m ()
 leafRegion s = do
@@ -261,8 +225,6 @@ orFail a = a <|> pure (error ("orFail failed"))
 {-# INLINABLE guardDeleteable #-}
 guardDeleteable :: (Alternative m, MonadGraphMut k m, Show k, MonadCritical k m) => S.Set k -> m ()
 guardDeleteable ks = do
-    -- hasHidden <- containsHidden
-    -- guard $ S.null (S.intersection ks hasHidden)
     hasCrit <- containingCritical
     guard $ S.null (S.intersection ks hasCrit)
 
@@ -298,9 +260,6 @@ hoistInCrit l = GenAction $ \limit -> cut $ do
     parentSize <- getArity parent
     childSize <- getArity kain
     let leftover = limit - parentSize + childSize
-    
-    -- leftover <- leftoverSize limit parent kain
-
     guardDeleteable (S.delete kain siblings)
 
     alreadyHidden <- filterM isHidden (S.toList $ S.delete kain siblings)
@@ -355,14 +314,3 @@ setAt l n v = do
     navTo l n
     setCursor v
 
-{-# INLINABLE replaceValue #-}
-replaceValue ::(Num k, HasIdx o k, RecView o m, MonadGraphMut k m, RecView o m, Show k) => Traversal' o o -> k -> o -> m ()
-replaceValue l k v = do
-    navTo l k
-    setCursor v
-    newDeps <- depsMap l
-    addDeps newDeps
-    getParent k >>= \case
-      Nothing -> pure ()
-      Just p -> addChild p (theIdx v)
-    deleteNodesBelow k

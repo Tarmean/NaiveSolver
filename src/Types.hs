@@ -40,19 +40,6 @@ class POrd s where
    Just EQ -> True
    _ -> False
 type Var = Int
-data DD v s
-  = If v s (DD v s) (DD v s)
-  | IsTrue
-  | Iff s
-  | IsFalse
-  deriving (Eq, Ord, Show)
-
-data DDF v s f
-  = IfF v s f f
-  | IsTrueF
-  | IffF s
-  | IsFalseF
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 
 class (Eq s, PMonoid s, RegularSemigroup s, PLattice s, Show s) => IsLit v s | s -> v where
@@ -276,3 +263,17 @@ instance (PMonoid a,PMonoid b,PMonoid c,PMonoid d, RegularSemigroup a, RegularSe
       mk x y = case x ==>? y of
          Nothing -> (False, top)
          Just z -> (True, z)
+
+data DD v s
+  = If v s (DD v s) (DD v s)
+  | IsTrue
+  | Iff s
+  | IsFalse
+  deriving (Eq, Ord, Show)
+
+data DDF v s f
+  = IfF v s f f
+  | IsTrueF
+  | IffF s
+  | IsFalseF
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
