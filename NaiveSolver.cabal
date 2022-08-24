@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       BFSChoiceTree
+      Boilerplate
       Data.Bag
       Data.BitVector
       Data.GridPrint
@@ -54,6 +55,7 @@ library
       EGraph.Storage
       EGraph.Types
       EGraph.UnionFind
+      EGraphTests
       EPropTest
       FiniteDomains
       Lib
